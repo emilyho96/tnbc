@@ -292,7 +292,7 @@ def s2(t):
 # sort by RxRSI
 df2 = df.sort_values(by='RxRSI').reset_index().drop(columns=['index'])
 '''
-# group relative to the SOC
+# group relative to the SOC range
 hlines = []
 llines = []
 for i in range(len(df2)):
@@ -364,69 +364,53 @@ plt.show()'''
 
 
 # NTCP calcs; fig 2b
-'''
-x = np.linspace(0,115,116)
-# cardiac = pd.read_csv('/Users/Emily/tnbc/MHDdosimetry.csv')
-# coeffL = np.polyfit(cardiac['Total Dose'], cardiac['MHD_L'], 1) # force y-int 0?
-# coeffR = np.polyfit(cardiac['Total Dose'], cardiac['MHD_R'], 1)
-# mhdL = np.poly1d(coeffL)
-# mhdR = np.poly1d(coeffR)
+# this fits to dosimetry data! need to rerun if new 
 
-# breast dose to OAR dose
-mld = 0.1*x # NEEDS TO BE ADJUSTED
-# cardiac numbers from fit that is commented out above
-mhdL = np.poly1d([0.02077143, 0.00590476])
-mhdR = np.poly1d([1.00000000e-02, 1.35973996e-16])
-
-# constants
-b0 = -3.87 # from QUANTEC lung
-b1 = 0.126 # from QUANTEC lung
-
-card_base = 0.001 # what should this baseline be? 0?
-card_slope = 0.074 
-
-# ALSO NEED TO CHECK THESE ADJUSTMENTS
-# ntcp from OAR dose
-ntcp_cardL = card_base + card_slope * mhdL(x)
-ntcp_cardR = card_base + card_slope * mhdR(x)
-ntcp_pulm = np.exp(b0+b1*mld)/(1+np.exp(b0+b1*mld)) 
-
-fig, ax = plt.subplots()
-plt.plot(x, ntcp_cardL, label="Major Cardiac Event (L)")
-plt.plot(x, ntcp_cardR, label="Major Cardiac Event (R)")
-plt.plot(x, ntcp_pulm, label="Pneumonitis")
-plt.axvline(x=low, color='gray', linestyle='dashed')
-plt.axvline(x=high, color='gray', linestyle='dashed')
-plt.xlabel("Dose (Gy)")
-plt.ylabel("NTCP")
-ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
-plt.legend()'''
-
-# input total dose + side, output ntcp
-def ntcp(td, side):
-    
-    mhdL = np.poly1d([0.02077143, 0.00590476])
-    mhdR = np.poly1d([1.00000000e-02, 1.35973996e-16])
-    mld = 0.1*td # NEEDS TO BE ADJUSTED
+# fits for MHD, MLD to convert breast dose to OAR dose
+def ntcp(td, side, dosi):
+        
+    coeffL = np.polyfit(dosi['Total Dose'], dosi['MHD_L'], 1) # force y-int 0?
+    coeffR = np.polyfit(dosi['Total Dose'], dosi['MHD_R'], 1)
+    coeffLung = np.polyfit(dosi['Total Dose'], dosi['MLD'], 1)
+    mhdL = np.poly1d(coeffL)
+    mhdR = np.poly1d(coeffR)
+    mld = np.poly1d(coeffLung)
     
     # constants
     b0 = -3.87 # from QUANTEC lung
     b1 = 0.126 # from QUANTEC lung
     
-    card_base = 0.001 # what should this baseline be? 0?
+    card_base = 0. # what should this baseline be? 0?
     card_slope = 0.074 
     
     # ALSO NEED TO CHECK THESE ADJUSTMENTS
-    ntcp_cardL = card_base + card_slope * mhdL(td)
-    ntcp_cardR = card_base + card_slope * mhdR(td)
-    ntcp_pulm = np.exp(b0+b1*mld)/(1+np.exp(b0+b1*mld)) # replace x with mld
-    
+    # ntcp from OAR dose
+    ntcp_cardL = card_base + card_slope * (mhdL(td) - mhdL(0))
+    ntcp_cardR = card_base + card_slope * (mhdR(td) - mhdR(0))
+    ntcp_pulm = np.exp(b0+b1*mld(td))/(1+np.exp(b0+b1*mld(td))) - np.exp(b0)/(1+np.exp(b0))    
+
     if side == 'L': 
         return ntcp_cardL + ntcp_pulm
     
     if side == 'R': 
         return ntcp_cardR + ntcp_pulm
-
+    
+    if side == 'plot':
+        return ntcp_cardL, ntcp_cardR, ntcp_pulm
+    
+td = np.linspace(0,90,91)
+dosi = pd.read_csv('/Users/Emily/tnbc/dosi_summ.csv')
+ntcp_cardL, ntcp_cardR, ntcp_pulm = ntcp(td, 'plot', dosi)
+fig, ax = plt.subplots()
+plt.plot(td, ntcp_cardL, label="Major Cardiac Event (L)")
+plt.plot(td, ntcp_cardR, label="Major Cardiac Event (R)")
+plt.plot(td, ntcp_pulm, label="Pneumonitis")
+plt.axvline(x=low, color='gray', linestyle='dashed')
+plt.axvline(x=high, color='gray', linestyle='dashed')
+plt.xlabel("Dose (Gy)")
+plt.ylabel("NTCP")
+ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
+plt.legend()
 
 # fig 2c; need to run code for other parts of plot 2 first
 '''fig = plt.plot()
@@ -488,6 +472,7 @@ plt.scatter(x=tcc_kde[0],y=tcc_kde[1])
 '''
 
 
+'''
 # time to simulate boost/no boost
 N = 80
 rsi_distr = tcc['RSI']
@@ -580,6 +565,7 @@ def trial(N, distr, t, style):
     
     return temp # boost_surv, noboost_surv
 
+
 N = 2700
 style = 'random'
 results = trial(N, rsi_distr, t, style)
@@ -603,7 +589,7 @@ plt.title(style+' survival comparison, n='+str(2*N))
 ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
 plt.ylim(0,1)
 
-
+'''
 
 
 
