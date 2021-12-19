@@ -244,7 +244,7 @@ plt.xlim([0,50])
 plt.ylim([-0.2,1.1])
 '''
 
-'''
+
 # weibull fits for event above and below cut
 # overall event, not survival
 
@@ -260,11 +260,11 @@ s1_rho = s1.rho_
 s2_lambda = s2.lambda_ # inadequate
 s2_rho = s2.rho_
 # plot weibull fit
-fig2 = s1.plot_survival_function()
-s2.plot_survival_function(ax=fig2)
+fig2 = s1.plot_survival_function(label='above cut')
+s2.plot_survival_function(ax=fig2, label='below cut')
 # a3.plot(ax=fig2, color='black', ci_show=False, label='combined above')
 # b3.plot(ax=fig2, color='black', linestyle='dashed', ci_show=False, label='combined below')
-'''
+
 
 # evaluate S1 fit at a value t
 # S1 is TD > GARD_T
@@ -328,19 +328,21 @@ plt.show()
 # fig 1c (need to run the part for 1b first though)
 # CAUTION the color cutoff depends on the bin arrangement
 # the PDF is also scaled manually
-'''fig, ax = plt.subplots()
-x = np.linspace(0,98,50)
+fig, ax = plt.subplots()
+xmax = round(max(df['RxRSI']/20))*20 - 2
+xint = round(max(df['RxRSI']/20))*10
+x = np.linspace(0,xmax,xint)
 array = df['RxRSI']
 N, bins, patches = ax.hist(array,bins=x)
 bw = 1.2*array.std()*np.power(array.size,-1/5)
 kde = stats.gaussian_kde(array)
 scale = 350 # idk if this is the right scale but it's eyeballed
 curve = scale*kde(x)
-for i in range(0,25):
+for i in range(0,int(low/2)):
     patches[i].set_facecolor('royalblue')
-for i in range(25,33):    
+for i in range(int(low/2),int(high/2)):    
     patches[i].set_facecolor('gray')
-for i in range(33,49):
+for i in range(int(high/2),xint-1):
     patches[i].set_facecolor('tomato') 
 # plt.axvline(x=low, color='gray', linestyle='dashed')
 # plt.axvline(x=high, color='gray', linestyle='dashed')
@@ -363,10 +365,8 @@ plt.ylabel("TCP")
 plt.show()'''
 
 
-# NTCP calcs; fig 2b
+# NTCP calcs
 # this fits to dosimetry data! need to rerun if new 
-
-# fits for MHD, MLD to convert breast dose to OAR dose
 def ntcp(td, side, dosi):
         
     coeffL = np.polyfit(dosi['Total Dose'], dosi['MHD_L'], 1) # force y-int 0?
@@ -383,7 +383,6 @@ def ntcp(td, side, dosi):
     card_base = 0. # what should this baseline be? 0?
     card_slope = 0.074 
     
-    # ALSO NEED TO CHECK THESE ADJUSTMENTS
     # ntcp from OAR dose
     ntcp_cardL = card_base + card_slope * (mhdL(td) - mhdL(0))
     ntcp_cardR = card_base + card_slope * (mhdR(td) - mhdR(0))
@@ -398,7 +397,8 @@ def ntcp(td, side, dosi):
     if side == 'plot':
         return ntcp_cardL, ntcp_cardR, ntcp_pulm
     
-td = np.linspace(0,90,91)
+# fig 2b
+'''td = np.linspace(0,90,91)
 dosi = pd.read_csv('/Users/Emily/tnbc/dosi_summ.csv')
 ntcp_cardL, ntcp_cardR, ntcp_pulm = ntcp(td, 'plot', dosi)
 fig, ax = plt.subplots()
@@ -410,7 +410,7 @@ plt.axvline(x=high, color='gray', linestyle='dashed')
 plt.xlabel("Dose (Gy)")
 plt.ylabel("NTCP")
 ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
-plt.legend()
+plt.legend()'''
 
 # fig 2c; need to run code for other parts of plot 2 first
 '''fig = plt.plot()
@@ -471,7 +471,6 @@ tcc_kde = construct_kde(tcc['RSI'].to_numpy())
 plt.scatter(x=tcc_kde[0],y=tcc_kde[1])
 '''
 
-
 '''
 # time to simulate boost/no boost
 N = 80
@@ -481,6 +480,7 @@ high = 66
 rsi_l = np.exp(-n*d*cut/low) 
 rsi_h = np.exp(-n*d*cut/high) 
 t = np.linspace(0,10) # time axis in years
+dosi = pd.read_csv('/Users/Emily/tnbc/dosi_summ.csv') #dosimetey data for fits
 
 # for 2N patients, draw from RSI distribution
 def rsi_sample(N, distr):
@@ -539,7 +539,7 @@ def trial(N, distr, t, style):
     tox = []
     for index, patient in temp.iterrows():   
         
-        tox.append(ntcp(patient['TD'],patient['side']))   
+        tox.append(ntcp(patient['TD'],patient['side'],dosi))   
         
     temp['NTCP'] = tox   
     
@@ -590,7 +590,6 @@ ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y)))
 plt.ylim(0,1)
 
 '''
-
 
 
 
