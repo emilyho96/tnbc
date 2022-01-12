@@ -26,14 +26,20 @@ import plotly.graph_objs as go
 from sklearn.neighbors import KernelDensity
 from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
+from scipy.stats import norm
+from scipy import special
+erf = special.erf
+pdf = norm.pdf
+cdf = norm.cdf
+ppf = norm.ppf
 
 
 # load data; alpha_g calculated with the constants below, then GARD calculated
 # with patient-specific n, d
-df = pd.read_csv('/Users/Emily/tnbc/data.csv')
+df = pd.read_csv('data.csv')
 # nsclc = pd.read_csv('/Users/Emily/tnbc/lc_data.csv')
 df = df.drop(columns=['Unnamed: 0'])
-tcc = pd.read_csv('/Users/Emily/tnbc/TCCdata.csv')
+tcc = pd.read_csv('TCCdata.csv')
 tcc.insert(1, 'Source', 'TCC')
 
 # constants/calculations
@@ -52,7 +58,7 @@ tcc['alpha_g'] = ag
 gard = n*d*(ag+beta*d)
 tcc['GARD'] = gard
 '''
-# set cut-point, SOC range
+# set cut-point, standard-of-care (SOC) range
 gard_t = 22
 high = 66 
 low = 50 
@@ -242,7 +248,7 @@ plt.scatter(gard2,p_vals2)
 # plt.yscale('log')
 plt.xlim([0,50])
 plt.ylim([-0.2,1.1])
-'''
+
 
 
 # weibull fits for event above and below cut
@@ -264,7 +270,7 @@ fig2 = s1.plot_survival_function(label='above cut')
 s2.plot_survival_function(ax=fig2, label='below cut')
 # a3.plot(ax=fig2, color='black', ci_show=False, label='combined above')
 # b3.plot(ax=fig2, color='black', linestyle='dashed', ci_show=False, label='combined below')
-
+'''
 
 # evaluate S1 fit at a value t
 # S1 is TD > GARD_T
@@ -324,7 +330,7 @@ plt.text(40, 80, str(hperc)+'% of patients require >'+str(high)+'Gy')
 plt.show()
 '''
 
-
+'''
 # fig 1c (need to run the part for 1b first though)
 # CAUTION the color cutoff depends on the bin arrangement
 # the PDF is also scaled manually
@@ -365,67 +371,105 @@ plt.ylabel("TCP")
 plt.show()'''
 
 
-# NTCP calcs
-# this fits to dosimetry data! need to rerun if new 
-def ntcp(td, side, dosi):
-        
-    coeffL = np.polyfit(dosi['Total Dose'], dosi['MHD_L'], 1) # force y-int 0?
-    coeffR = np.polyfit(dosi['Total Dose'], dosi['MHD_R'], 1)
-    coeffLung = np.polyfit(dosi['Total Dose'], dosi['MLD'], 1)
+# get coefficients for calculating cardiac/pulm radiation doses from total breast dose
+dosi = pd.read_csv('dosi_summ.csv') #dosimetry data for fits
+coeffL = np.polyfit(dosi['Total Dose'], dosi['MHD_L'], 1) # force y-int 0?
+coeffR = np.polyfit(dosi['Total Dose'], dosi['MHD_R'], 1)
+coeffLung = np.polyfit(dosi['Total Dose'], dosi['MLD'], 1)
+
+# calc mean heart dose then card RR from total breast dose
+def rr_card(td, side):
+    
     mhdL = np.poly1d(coeffL)
     mhdR = np.poly1d(coeffR)
+    
+    card_slope = 0.074 
+    
+    if side == 'L': 
+        rr = card_slope * (mhdL(td)-mhdL(0))
+        
+    if side == 'R': 
+        rr = card_slope * (mhdR(td)-mhdR(0))
+    
+    return rr + 1
+    
+    
+# calc mean lung dose then pulm HR from total breast dose
+def hr_pulm(td):
+    
     mld = np.poly1d(coeffLung)
     
     # constants
     b0 = -3.87 # from QUANTEC lung
     b1 = 0.126 # from QUANTEC lung
     
-    card_base = 0. # what should this baseline be? 0?
-    card_slope = 0.074 
+    hr = np.exp(b0+b1*mld(td))/(1+np.exp(b0+b1*mld(td))) - np.exp(b0)/(1+np.exp(b0))    
     
-    # ntcp from OAR dose
-    ntcp_cardL = card_base + card_slope * (mhdL(td) - mhdL(0))
-    ntcp_cardR = card_base + card_slope * (mhdR(td) - mhdR(0))
-    ntcp_pulm = np.exp(b0+b1*mld(td))/(1+np.exp(b0+b1*mld(td))) - np.exp(b0)/(1+np.exp(b0))    
+    return hr
 
-    if side == 'L': 
-        return ntcp_cardL + ntcp_pulm
+
+# NTCP calcs
+# this fits to dosimetry data! need to rerun if new 
+# NEEDS TO BE FIXED
+def ntcp(tcp, td, side):
+     
+    rr = rr_card(td, side)
+    hr = hr_pulm(td)
     
-    if side == 'R': 
-        return ntcp_cardR + ntcp_pulm
+    print(rr, hr)
     
-    if side == 'plot':
-        return ntcp_cardL, ntcp_cardR, ntcp_pulm
+    return np.power(tcp, np.exp(hr))
+
     
+# t = np.linspace(0,10)
+# lc = s2(t)
+# plc = ntcp(lc, 70, 'L', dosi)
+# plt.plot(t,lc)
+# plt.plot(t,plc)
+# plt.ylim([0,1])
+   
+ 
 # fig 2b
-'''td = np.linspace(0,90,91)
-dosi = pd.read_csv('/Users/Emily/tnbc/dosi_summ.csv')
-ntcp_cardL, ntcp_cardR, ntcp_pulm = ntcp(td, 'plot', dosi)
-fig, ax = plt.subplots()
-plt.plot(td, ntcp_cardL, label="Major Cardiac Event (L)")
-plt.plot(td, ntcp_cardR, label="Major Cardiac Event (R)")
-plt.plot(td, ntcp_pulm, label="Pneumonitis")
+td = np.linspace(0,90,91)
+# from table 3, lifetime risk for 45yo women, total events related to atherosclerotic disease
+# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3336876/
+pts_strat = np.array([7.1, 14.4, 22, 40.1, 16.4])/100
+strat_mce = np.array([4.1, 12.2, 15.6, 20.2, 30.7])/100
+card_base = np.sum(pts_strat*strat_mce)
+
+hr_cL = (rr_card(td,'L') - 1) * card_base
+hr_cR = (rr_card(td,'R') - 1) * card_base
+hr_p = hr_pulm(td)
+
+fig, ax = plt.subplots(figsize=(10,7))
+plt.plot(td, hr_cL, color=(.1,.3,.7), label="Major Cardiac Event (L)")
+plt.plot(td, hr_cR, color=(.1,.4,.7), label="Major Cardiac Event (R)")
+plt.plot(td, hr_p, color=(0,.6,.5), label="Pneumonitis")
 plt.axvline(x=low, color='gray', linestyle='dashed')
 plt.axvline(x=high, color='gray', linestyle='dashed')
 plt.xlabel("Dose (Gy)")
-plt.ylabel("NTCP")
-ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
-plt.legend()'''
+plt.ylabel("NTCP") # by HR
+plt.ylim([0,0.05])
+ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:0.0%}'.format(y))) 
+plt.legend()
+
 
 # fig 2c; need to run code for other parts of plot 2 first
-'''fig = plt.plot()
+fig = plt.plot(figsize=(20,7))
 x = np.linspace(0,115,116)
 scale = 38 # idk if this is the right scale but it's eyeballed
-
+# TCP = unpenalized local control
 kde = stats.gaussian_kde(df['RxRSI'])
-curve1 = kde(x) # idk if this is the right scale but it's eyeballed
+curve1 = kde(x)
 plt.fill_between(x, y1=scale*curve1, y2=0, color='tab:blue', alpha=0.3) 
 pdf1 = kde.evaluate(x)/sum(kde.evaluate(x))
 cdf1 = np.cumsum(pdf1)
 plt.plot(x, cdf1, color='tab:blue', label="TCP")
-
-cdf2 = cdf1 - ntcp_card - ntcp_card
-plt.plot(x, cdf2, color='tab:orange', label="Adjusted TCP")
+# TCP - NTCP = penalized
+hr_p = hr_pulm(x)
+hr_c = card_base/2 * (rr_card(x,'L') + rr_card(x,'R') - 2)
+cdf2 = cdf1*(1-hr_p-hr_c)
+plt.plot(x, cdf2, color='tab:orange', label="Penalized Control")
 pdf2 = np.diff(cdf2) #THIS ASSUMES Y-VALUES ARE 1 APART
 plt.fill_between(x[1:], y1=scale*pdf2, y2=0, color='tab:orange', alpha=0.3)
 
@@ -433,14 +477,43 @@ plt.axvline(x=low, color='gray', linestyle='dashed')
 plt.axvline(x=high, color='gray', linestyle='dashed')
 plt.xlabel("Dose (Gy)")
 plt.ylabel("TCP")
-plt.legend()
-plt.show()'''
+plt.legend(fontsize=9)
+plt.show()
 
 
-# supp 2 Gaussian mixture modeling to compare modes of different cohorts?
+# '''# supp 2 Gaussian mixture modeling to compare modes of different cohorts? or does KS compare
 # copied from Geoff's code
+from sklearn import mixture
+
+def create_kde(array, bandwidth=None):
+    """ calculating KDE and CDF using scipy """
+    if bandwidth == None:
+        bw = 'scott'
+    else:
+        bw = bandwidth
+    kde = stats.gaussian_kde(dataset=array,bw_method=bw)
+    
+    num_test_points=200
+    x = np.linspace(0,np.max(array)*1.2,num_test_points)
+    kdens=kde.pdf(x)
+    
+    cdf=np.zeros(shape=num_test_points)
+    for i in range(num_test_points):
+        cdf[i] = kde.integrate_box_1d(low=0,high=x[i])
+        
+    return x,kdens,cdf
+
+
+def calc_cdf(array,var,bandwidth=None):
+    if bandwidth == None:
+        bw = 1.2*array.std()*np.power(array.size,-1/5)
+    else:
+        bw = bandwidth
+    kde=stats.gaussian_kde(dataset=array,bw_method=bw)
+    return kde.integrate_box_1d(low=0,high=var)
+
 # unclear whaat to do with this rn
-'''def construct_kde(array, bandwidth=None):
+def construct_kde(array, bandwidth=None):
     
     if bandwidth == None:
         bw = 1.2*array.std()*np.power(array.size,-1/5) # this appears to be from wiki for bimodal KDE
@@ -461,15 +534,107 @@ plt.show()'''
 
     return x, kdens, cdf_array
 
-nki_kde = construct_kde(nki['RSI'].to_numpy())
-plt.scatter(x=nki_kde[0],y=nki_kde[1])
+# nki_kde = construct_kde(nki['RSI'].to_numpy())
+# plt.scatter(x=nki_kde[0],y=nki_kde[1])
 
-mcc_kde = construct_kde(mcc['RSI'].to_numpy())
-plt.scatter(x=mcc_kde[0],y=mcc_kde[1])
+# mcc_kde = construct_kde(mcc['RSI'].to_numpy())
+# plt.scatter(x=mcc_kde[0],y=mcc_kde[1])
 
-tcc_kde = construct_kde(tcc['RSI'].to_numpy())
-plt.scatter(x=tcc_kde[0],y=tcc_kde[1])
-'''
+# tcc_kde = construct_kde(tcc['RSI'].to_numpy())
+# plt.scatter(x=tcc_kde[0],y=tcc_kde[1])
+
+r1=nki["RSI"].values
+r2= tcc["RSI"].values
+r1=r1.reshape(-1,1)
+r2=r2.reshape(-1,1)
+gm1 = mixture.GaussianMixture(n_components=2)#,covariance_type='full')
+gm1.fit(X=r1)
+m1 = gm1.means_.ravel()
+se1, wt1 = [np.sqrt(gm1.covariances_).ravel(), gm1.weights_.ravel()]
+m1, se1
+gm2 = mixture.GaussianMixture(n_components=2,covariance_type='full')
+gm2.fit(X=r2)
+m2 = gm2.means_.ravel()
+se2, wt2 = [np.sqrt(gm2.covariances_).ravel(), gm2.weights_.ravel()]
+m2, se2
+
+colrs = [(.9,.35,.2), (.1, .7, .7)]
+# fig, ax = plt.subplots()
+# for i in range(2):
+#     xi = np.arange(m1[i]-3*se1[i], m1[i]+3*se1[i], .001)
+#     yi = norm.pdf(xi,m1[i],se1[i])*wt1[i]**1.3
+#     ax.plot(xi,yi, color = colrs[i])
+# kde1 = create_kde(r1.ravel())
+# ax.plot(kde1[0], kde1[1]*1.1, color = (.4,.4,.4),lw=1)
+# hist1 = np.histogram(r1,bins=np.arange(0,.8,.05),density=True,)
+# ax.bar(x=hist1[1][0:-1], height = hist1[0]*.7, width=.04, align = 'edge', alpha = .2, color=(.5,.5,.5))
+# ax.set_xlim(0,.7)
+# ax.set_yticks([])
+
+fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(12,4))
+""" --------- first subplot ------------- """
+ax = axes[0]
+for i in range(2):
+    xi = np.arange(m1[i]-3*se1[i], m1[i]+3*se1[i], .001)
+    yi = norm.pdf(xi,m1[i],se1[i])*wt1[i]**1.3
+
+    ax.plot(xi,yi, color = colrs[i])
+
+kde1 = create_kde(r1.ravel())
+ax.plot(kde1[0], kde1[1]*1.1, color = (.4,.4,.4),lw=1.25)
+
+hist1 = np.histogram(r1,bins=np.arange(0,.8,.05),density=True,)
+ax.bar(x=hist1[1][0:-1], height = hist1[0]*.7, width=.04, align = 'edge', alpha = .2, color=(.5,.5,.5))
+
+ax.axvline(x=.295, ls='--', color='k', lw=1)
+ax.axvline(x=.475, ls='--', color='k', lw=1)
+
+string_text = "mean: %.3f\nscale: %.3f" % (m1[0], se1[0])
+ax.text(x=.1, y= .5, s = string_text, transform = ax.transAxes, fontsize=9)
+string_text = "mean: %.3f\nscale: %.3f" % (m1[1], se1[1])
+ax.text(x=.7, y= .5, s = string_text, transform = ax.transAxes, fontsize=9)
+
+ax.set_xlim(0,.7)
+ax.set_yticks([])
+ax.set_ylabel("Density")
+ax.set_title("(A)",loc = 'left')
+ax.set_xlabel("RSI")
+
+""" --------- second subplot ------------- """
+ax = axes[1]
+
+kde2 = create_kde(r2.ravel())
+ax.plot(kde2[0], kde2[1], color = (.4,.4,.4),lw=1.25, label='Composite KDE')
+
+hist2 = np.histogram(r2,bins=np.arange(0,.8,.05),density=True,)
+ax.bar(x=hist2[1][0:-1], height = hist2[0]*.8, width=.04, align = 'edge', alpha = .2, color = (.5,.5,.5))
+
+ax.axvline(x=.295, ls='--', color='k', lw=1)
+ax.axvline(x=.475, ls='--', color='k', lw=1)
+
+labels = ["Gaussian Mode 1", "Gaussian Mode 2"]
+for i in range(2):
+    xi = np.arange(m2[i]-3*se2[i], m2[i]+3*se2[i], .001)
+    yi = norm.pdf(xi,m2[i],se2[i])*wt2[i]**1.3
+
+    ax.plot(xi,yi,color = colrs[i], label = labels[i])
+
+string_text = "mean: %.3f\nscale: %.3f" % (m2[0], se2[0])
+ax.text(x=.1, y= .5, s = string_text, transform = ax.transAxes,fontsize=9)
+string_text = "mean: %.3f\nscale: %.3f" % (m2[1], se2[1])
+ax.text(x=.75, y= .5, s = string_text, transform = ax.transAxes,fontsize=9)
+
+ax.set_xlim(0,.7)
+ax.set_yticks([])
+ax.set_title("(B)", loc = 'left')
+ax.set_xlabel("RSI")
+
+ax.legend(bbox_to_anchor = (1.05,0.6))
+
+fig.subplots_adjust(wspace=.1,left=.04, right= .8)
+
+# plt.savefig('/Users/geoffreysedor/gui_app/Supplemental/Figures/'+'dist_comparison', dpi =300) #, edgecolor='black', linewidth=4)'''
+
 
 '''
 # time to simulate boost/no boost
@@ -480,7 +645,7 @@ high = 66
 rsi_l = np.exp(-n*d*cut/low) 
 rsi_h = np.exp(-n*d*cut/high) 
 t = np.linspace(0,10) # time axis in years
-dosi = pd.read_csv('/Users/Emily/tnbc/dosi_summ.csv') #dosimetey data for fits
+dosi = pd.read_csv('dosi_summ.csv') #dosimetry data for fits
 
 # for 2N patients, draw from RSI distribution
 def rsi_sample(N, distr):
