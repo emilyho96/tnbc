@@ -373,7 +373,7 @@ plt.show()'''
 
 # get coefficients for calculating cardiac/pulm radiation doses from total breast dose
 dosi = pd.read_csv('dosi_summ.csv') #dosimetry data for fits
-coeffL = np.polyfit(dosi['Total Dose'], dosi['MHD_L'], 1) # force y-int 0?
+coeffL = np.polyfit(dosi['Total Dose'], dosi['MHD_L'], 1) 
 coeffR = np.polyfit(dosi['Total Dose'], dosi['MHD_R'], 1)
 coeffLung = np.polyfit(dosi['Total Dose'], dosi['MLD'], 1)
 
@@ -407,29 +407,8 @@ def hr_pulm(td):
     
     return hr
 
-
-# NTCP calcs
-# this fits to dosimetry data! need to rerun if new 
-# NEEDS TO BE FIXED
-def ntcp(tcp, td, side):
-     
-    rr = rr_card(td, side)
-    hr = hr_pulm(td)
-    
-    print(rr, hr)
-    
-    return np.power(tcp, np.exp(hr))
-
-    
-# t = np.linspace(0,10)
-# lc = s2(t)
-# plc = ntcp(lc, 70, 'L', dosi)
-# plt.plot(t,lc)
-# plt.plot(t,plc)
-# plt.ylim([0,1])
-   
  
-# fig 2b
+'''# fig 2b
 td = np.linspace(0,90,91)
 # from table 3, lifetime risk for 45yo women, total events related to atherosclerotic disease
 # https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3336876/
@@ -455,7 +434,7 @@ plt.legend()
 
 
 # fig 2c; need to run code for other parts of plot 2 first
-fig = plt.plot(figsize=(20,7))
+fig = plt.figure(figsize=(20,7))
 x = np.linspace(0,115,116)
 scale = 38 # idk if this is the right scale but it's eyeballed
 # TCP = unpenalized local control
@@ -468,7 +447,8 @@ plt.plot(x, cdf1, color='tab:blue', label="TCP")
 # TCP - NTCP = penalized
 hr_p = hr_pulm(x)
 hr_c = card_base/2 * (rr_card(x,'L') + rr_card(x,'R') - 2)
-cdf2 = cdf1*(1-hr_p-hr_c)
+# cdf2 = np.power(cdf1, 1+hr_p+hr_c)
+cdf2 = cdf1*(1 - hr_p - hr_c)
 plt.plot(x, cdf2, color='tab:orange', label="Penalized Control")
 pdf2 = np.diff(cdf2) #THIS ASSUMES Y-VALUES ARE 1 APART
 plt.fill_between(x[1:], y1=scale*pdf2, y2=0, color='tab:orange', alpha=0.3)
@@ -478,10 +458,10 @@ plt.axvline(x=high, color='gray', linestyle='dashed')
 plt.xlabel("Dose (Gy)")
 plt.ylabel("TCP")
 plt.legend(fontsize=9)
-plt.show()
+plt.show()'''
 
 
-# '''# supp 2 Gaussian mixture modeling to compare modes of different cohorts? or does KS compare
+'''# supp 2 Gaussian mixture modeling to compare modes of different cohorts? or does KS compare
 # copied from Geoff's code
 from sklearn import mixture
 
@@ -636,16 +616,37 @@ fig.subplots_adjust(wspace=.1,left=.04, right= .8)
 # plt.savefig('/Users/geoffreysedor/gui_app/Supplemental/Figures/'+'dist_comparison', dpi =300) #, edgecolor='black', linewidth=4)'''
 
 
-'''
-# time to simulate boost/no boost
-N = 80
-rsi_distr = tcc['RSI']
-low = 50
-high = 66
-rsi_l = np.exp(-n*d*cut/low) 
-rsi_h = np.exp(-n*d*cut/high) 
-t = np.linspace(0,10) # time axis in years
-dosi = pd.read_csv('dosi_summ.csv') #dosimetry data for fits
+# accounts for OAR survival cost from original tumor control
+def adj_surv(surv, td, side):
+    
+    rr = rr_card(td, side)
+    hr = hr_pulm(td)
+    adj = np.power(surv, np.exp(hr)*rr)
+    
+    # print(td, rr, hr)
+    
+    return adj
+
+
+# tmin = 0
+# tmax = 10
+# t = np.linspace(tmin, tmax)
+# lc = s1(t)
+# plc = adj_surv(lc, 70, 'R')
+# plt.plot(t,lc)
+# plt.plot(t,plc)
+# plt.ylim([0,1])
+# plt.xlim([tmin, tmax])
+   
+
+# # time to simulate boost/no boost
+# N = 80
+# rsi_distr = tcc['RSI']
+# rsi_l = np.exp(-n*d*cut/low) # minimum
+# rsi_h = np.exp(-n*d*cut/high) 
+# tmin = 0
+# tmax = 10
+# t = np.linspace(tmin, tmax) # time axis in years
 
 # for 2N patients, draw from RSI distribution
 def rsi_sample(N, distr):
@@ -659,17 +660,16 @@ def rsi_sample(N, distr):
 
 # returns dataframe
 # calls ntcp, rsi_sample
-def trial(N, distr, t, style):
+def trial(patients, t, style):
     
     # RSI sample
-    temp = pd.DataFrame(rsi_sample(N, distr), columns=['RSI'])
+    temp = patients 
     # calculate GARD, RxRSI 
     # assumes 2Gy dose
     # temp['GARD'] = -temp['TD']/(n*d)*np.log(temp['RSI']) ACTUALLY THIS LINE WON'T WORK AFTER MOVING THIS CHUNK
     temp['RxRSI'] = -n*d*cut/np.log(temp['RSI'])
     # assign sides
     temp['side'] = list('LR'*N)
-        
     
     if style == 'random': # randomized trial
 
@@ -679,69 +679,92 @@ def trial(N, distr, t, style):
         temp['TD'] = low
         temp.loc[N:,'TD'] = high
         
-    if style == 'sorted': # for boost grp, only RSI in middle range get boost
-
-        temp['trt'] = 'no boost'
-        temp.loc[N:,'trt'] = 'boost'
-        
-        # temp = temp.sort_values(by='RSI').reset_index().drop(columns=['index'])
-    
+    # for boost grp, only RSI in middle range get boost
+    if style == 'sorted': 
+     
         temp['TD'] = low
-        temp.loc[(temp['trt']=='boost') & (temp['RSI']>rsi_l) & (temp['RSI']<rsi_h),'TD'] = high # might be problematic but seems to work
+        temp['trt'] = 'no boost'
+        temp.loc[((temp['RSI']>rsi_l) & (temp['RSI']<rsi_h)),'TD'] = high 
+        temp.loc[(temp['TD']==high), 'trt'] = 'boost'
         
     # judging by results this may be glitching
+    # NEED TO CHECK THESE CLIP MIN/MAX
     if style == 'custom': # for boost grp, TD = RxRSI within range
 
         temp['trt'] = 'no boost'
         temp.loc[N:,'trt'] = 'boost'
         
         temp['TD'] = low
-        # THESE MIN/MAX VALUES SHOULD BE CHECKD
         temp.loc[N:,'TD'] = list(temp.loc[N:,'RxRSI'].clip(45, 80))
-        
-        
-    # calc NTCP based on dose and side
-    tox = []
-    for index, patient in temp.iterrows():   
-        
-        tox.append(ntcp(patient['TD'],patient['side'],dosi))   
-        
-    temp['NTCP'] = tox   
+ 
+    temp['pulmHR'] = hr_pulm(temp['TD'])
+    temp.loc[(temp['side']=='L'), 'cardHR'] = rr_card(temp.loc[(temp['side']=='L'), ['TD']], 'L')
+    temp.loc[(temp['side']=='R'), 'cardHR'] = rr_card(temp.loc[(temp['side']=='R'), ['TD']], 'R')
     
-    # get survival curve for each patient
+    # model penalized survival 
     surv = []
     # noboost_count = temp[temp['TD']==low].count()
     # boost_count = temp[temp['TD']==high].count()
     for index, patient in temp.iterrows():
         
         # select based on whether or not RxRSI is met
-        if patient['TD']>=patient['RxRSI']: 
+        if patient['TD']>=patient['RxRSI']: lc = s1(t)
+        else: lc = s2(t)
             
-            curve = s1(t)
-        else: 
-            
-            curve = s2(t)
-            
-        # adjust for tox
-        surv.append((1-patient['NTCP'])*curve)
-        # surv.append(curve)
+        # adjust for tox (penalized local control)
+        plc = np.power(lc, np.exp(patient['pulmHR'])*patient['cardHR'])
+        surv.append(plc)
         
     temp['surv'] = surv # unnecessary line
     
     return temp # boost_surv, noboost_surv
 
 
-N = 2700
-style = 'random'
-results = trial(N, rsi_distr, t, style)
+N = 200
+rsi_distr = tcc['RSI']
+t = np.linspace(0,10) # time axis in years
+rsi_l = np.exp(-n*d*cut/low) # minimum
+rsi_h = np.exp(-n*d*cut/high) 
+patients = pd.DataFrame(rsi_sample(N, rsi_distr), columns=['RSI'])
+
+# style = 'custom'
+# results = trial(patients, t, style)
     
+# # average survival for each group
+# noboost_surv = np.mean(results.loc[results['trt']=='no boost']['surv'], axis=0)
+# noboost_err = np.std(list(results.loc[results['trt']=='no boost']['surv']), axis=0)
+# boost_surv = np.mean(results.loc[results['trt']=='boost']['surv'], axis=0)
+# boost_err = np.std(list(results.loc[results['trt']=='boost']['surv']), axis=0)
+
+# fig, ax = plt.subplots() # figsize=(30,20)
+# # should this be 2stdev?
+# plt.fill_between(t, boost_surv-boost_err, boost_surv+boost_err, alpha=.3) 
+# plt.fill_between(t, noboost_surv-noboost_err, noboost_surv+noboost_err, alpha=.3) 
+# plt.plot(t, boost_surv, label='boost')
+# plt.plot(t, noboost_surv, label='no boost')
+# plt.legend()
+# plt.xlabel('Years')
+# plt.ylabel('Percent event-free')
+# plt.title(style+' survival comparison, n='+str(2*N))
+# ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
+# plt.ylim(0,1)
+
+
+fig = plt.figure(figsize=(35,10))
+from matplotlib.gridspec import GridSpec
+# gs1 = GridSpec(1, 1, figure=fig)
+gs2 = GridSpec(1, 3, figure=fig)
+# =============================================================================
+# Left panel: unsorted
+# =============================================================================
+ax = fig.add_subplot(gs2[0,0])
+style = 'random'
+results = trial(patients, t, style)
 # average survival for each group
 noboost_surv = np.mean(results.loc[results['trt']=='no boost']['surv'], axis=0)
 noboost_err = np.std(list(results.loc[results['trt']=='no boost']['surv']), axis=0)
 boost_surv = np.mean(results.loc[results['trt']=='boost']['surv'], axis=0)
 boost_err = np.std(list(results.loc[results['trt']=='boost']['surv']), axis=0)
-
-fig, ax = plt.subplots()
 # should this be 2stdev?
 plt.fill_between(t, boost_surv-boost_err, boost_surv+boost_err, alpha=.3) 
 plt.fill_between(t, noboost_surv-noboost_err, noboost_surv+noboost_err, alpha=.3) 
@@ -753,11 +776,48 @@ plt.ylabel('Percent event-free')
 plt.title(style+' survival comparison, n='+str(2*N))
 ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
 plt.ylim(0,1)
-
-'''
-
-
-
-
-
+# =============================================================================
+# Middle panel: sorted boost
+# =============================================================================
+ax = fig.add_subplot(gs2[0,1])
+style = 'sorted'
+results = trial(patients, t, style)
+# average survival for each group
+noboost_surv = np.mean(results.loc[results['trt']=='no boost']['surv'], axis=0)
+noboost_err = np.std(list(results.loc[results['trt']=='no boost']['surv']), axis=0)
+boost_surv = np.mean(results.loc[results['trt']=='boost']['surv'], axis=0)
+boost_err = np.std(list(results.loc[results['trt']=='boost']['surv']), axis=0)
+# should this be 2stdev?
+plt.fill_between(t, boost_surv-boost_err, boost_surv+boost_err, alpha=.3) 
+plt.fill_between(t, noboost_surv-noboost_err, noboost_surv+noboost_err, alpha=.3) 
+plt.plot(t, boost_surv, label='boost')
+plt.plot(t, noboost_surv, label='no boost')
+plt.legend()
+plt.xlabel('Years')
+plt.ylabel('Percent event-free')
+plt.title(style+' survival comparison, n='+str(2*N))
+ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
+plt.ylim(0,1)
+# =============================================================================
+# Right panel: custom boost
+# =============================================================================
+ax = fig.add_subplot(gs2[0,2])
+style = 'custom'
+results = trial(patients, t, style)
+# average survival for each group
+noboost_surv = np.mean(results.loc[results['trt']=='no boost']['surv'], axis=0)
+noboost_err = np.std(list(results.loc[results['trt']=='no boost']['surv']), axis=0)
+boost_surv = np.mean(results.loc[results['trt']=='boost']['surv'], axis=0)
+boost_err = np.std(list(results.loc[results['trt']=='boost']['surv']), axis=0)
+# should this be 2stdev?
+plt.fill_between(t, boost_surv-boost_err, boost_surv+boost_err, alpha=.3) 
+plt.fill_between(t, noboost_surv-noboost_err, noboost_surv+noboost_err, alpha=.3) 
+plt.plot(t, boost_surv, label='boost')
+plt.plot(t, noboost_surv, label='no boost')
+plt.legend()
+plt.xlabel('Years')
+plt.ylabel('Percent event-free')
+plt.title(style+' survival comparison, n='+str(2*N))
+ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
+plt.ylim(0,1)
 
