@@ -22,7 +22,7 @@ from matplotlib import collections as matcoll
 from scipy import stats 
 from scipy.special import ndtr
 import scipy
-import plotly.graph_objs as go
+# import plotly.graph_objs as go
 from sklearn.neighbors import KernelDensity
 from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
@@ -378,36 +378,48 @@ coeffR = np.polyfit(dosi['Total Dose'], dosi['MHD_R'], 1)
 coeffLung = np.polyfit(dosi['Total Dose'], dosi['MLD'], 1)
 
 # calc mean heart dose then card RR from total breast dose
-def rr_card(td, side):
+def rr_card(td, side=None, CI=None):
     
     mhdL = np.poly1d(coeffL)
     mhdR = np.poly1d(coeffR)
     
-    card_slope = 0.074 
+    card_slope = 0.074
+    if CI == 'upper': card_slope = 0.145
+    elif CI == 'lower': card_slope = 0.029
     
-    if side == 'L': 
-        rr = card_slope * (mhdL(td)-mhdL(0))
-        
-    if side == 'R': 
-        rr = card_slope * (mhdR(td)-mhdR(0))
-    
-    return rr + 1
-    
+    if side==None: rr = 1 + card_slope * (mhdL(td)-mhdL(0)+mhdR(td)-mhdR(0))/2
+    if side == 'L': rr = 1 + card_slope * (mhdL(td)-mhdL(0))
+    if side == 'R': rr = 1 + card_slope * (mhdR(td)-mhdR(0))
+            
+    return rr
+
     
 # calc mean lung dose then pulm HR from total breast dose
-def hr_pulm(td):
+def hr_pulm(td, CI=None):
     
     mld = np.poly1d(coeffLung)
+    MLD = mld(td)
     
-    # constants
-    b0 = -3.87 # from QUANTEC lung
-    b1 = 0.126 # from QUANTEC lung
+    # constants from QUANTEC lung
+    b0 = -3.87 
+    b1 = 0.126  
     
-    hr = np.exp(b0+b1*mld(td))/(1+np.exp(b0+b1*mld(td))) - np.exp(b0)/(1+np.exp(b0))    
+    # for relative to dose 0
+    constant = np.exp(b0)/(1+np.exp(b0))
     
+    # TD50 = 30.75 [28.7–33.9] Gy
+    if CI == 'upper':
+        b0 = -3.33
+        b1 = .153
+    elif CI == 'lower': 
+        b0 = -4.49
+        b1 = .100
+        
+    hr = np.exp(b0+b1*MLD)/(1+np.exp(b0+b1*MLD)) - constant
+       
     return hr
 
- 
+    
 '''# fig 2b
 td = np.linspace(0,90,91)
 # from table 3, lifetime risk for 45yo women, total events related to atherosclerotic disease
@@ -434,7 +446,7 @@ plt.legend()
 
 
 # fig 2c; need to run code for other parts of plot 2 first
-fig = plt.figure(figsize=(20,7))
+fig = plt.figure(figsize=(10,7))
 x = np.linspace(0,115,116)
 scale = 38 # idk if this is the right scale but it's eyeballed
 # TCP = unpenalized local control
@@ -615,38 +627,7 @@ fig.subplots_adjust(wspace=.1,left=.04, right= .8)
 
 # plt.savefig('/Users/geoffreysedor/gui_app/Supplemental/Figures/'+'dist_comparison', dpi =300) #, edgecolor='black', linewidth=4)'''
 
-
-# accounts for OAR survival cost from original tumor control
-def adj_surv(surv, td, side):
-    
-    rr = rr_card(td, side)
-    hr = hr_pulm(td)
-    adj = np.power(surv, np.exp(hr)*rr)
-    
-    # print(td, rr, hr)
-    
-    return adj
-
-
-# tmin = 0
-# tmax = 10
-# t = np.linspace(tmin, tmax)
-# lc = s1(t)
-# plc = adj_surv(lc, 70, 'R')
-# plt.plot(t,lc)
-# plt.plot(t,plc)
-# plt.ylim([0,1])
-# plt.xlim([tmin, tmax])
-   
-
-# # time to simulate boost/no boost
-# N = 80
-# rsi_distr = tcc['RSI']
-# rsi_l = np.exp(-n*d*cut/low) # minimum
-# rsi_h = np.exp(-n*d*cut/high) 
-# tmin = 0
-# tmax = 10
-# t = np.linspace(tmin, tmax) # time axis in years
+# individual ntcp
 
 # for 2N patients, draw from RSI distribution
 def rsi_sample(N, distr):
@@ -658,97 +639,140 @@ def rsi_sample(N, distr):
     # rsi_sample = np.random.normal(loc=0.4267245088495575, scale=0.11221246412456044, size=2*N)
     return patients
 
-# returns dataframe
-# calls ntcp, rsi_sample
-def trial(patients, t, style):
+def adj_surv(surv, td, side=None, CI=None):
     
-    # RSI sample
-    temp = patients 
+    rr = rr_card(td, side, CI)
+    hr = hr_pulm(td, CI)
+    adj = np.power(surv, np.exp(hr)*rr)
+        
+    return adj
+
+rsi_l = np.exp(-n*d*cut/low) # minimum RSI dose
+rsi_h = np.exp(-n*d*cut/high) 
+
+# returns UNPENALIZED survival curves for 2 treatment groups (control and boosted)
+# calls s1, s2
+def trial(temp, t, style):
+    
+    N = int(len(temp)/2)
+    
     # calculate GARD, RxRSI 
     # assumes 2Gy dose
-    # temp['GARD'] = -temp['TD']/(n*d)*np.log(temp['RSI']) ACTUALLY THIS LINE WON'T WORK AFTER MOVING THIS CHUNK
     temp['RxRSI'] = -n*d*cut/np.log(temp['RSI'])
-    # assign sides
+    # initialize settings
     temp['side'] = list('LR'*N)
+    temp['trt'] = 'no boost'
+    temp['TD'] = low
+    
+    grp1 = temp[:N].copy()
+    grp2 = temp[N:].copy()
     
     if style == 'random': # randomized trial
 
-        temp['trt'] = 'no boost'
-        temp.loc[N:,'trt'] = 'boost'
-        
-        temp['TD'] = low
-        temp.loc[N:,'TD'] = high
+        grp2['trt'] = 'boost'
+        grp2['TD'] = high
         
     # for boost grp, only RSI in middle range get boost
     if style == 'sorted': 
      
-        temp['TD'] = low
-        temp['trt'] = 'no boost'
-        temp.loc[((temp['RSI']>rsi_l) & (temp['RSI']<rsi_h)),'TD'] = high 
-        temp.loc[(temp['TD']==high), 'trt'] = 'boost'
+        grp2.loc[((grp2['RSI']>rsi_l) & (grp2['RSI']<rsi_h)),'TD'] = high 
+        grp2.loc[(grp2['TD']==high), 'trt'] = 'boost'
         
     # judging by results this may be glitching
     # NEED TO CHECK THESE CLIP MIN/MAX
     if style == 'custom': # for boost grp, TD = RxRSI within range
 
-        temp['trt'] = 'no boost'
-        temp.loc[N:,'trt'] = 'boost'
-        
-        temp['TD'] = low
-        temp.loc[N:,'TD'] = list(temp.loc[N:,'RxRSI'].clip(45, 80))
+        grp2['trt'] = 'boost'
+        grp2['TD'] = list(grp2['RxRSI'].clip(45, 80))
+     
+    noboost_count = grp2[grp2['TD']==low].count()
+    boost_count = grp2[grp2['TD']>low].count()
+    
+    # temp = pd.concat([grp1, grp2])
+    
+#     temp[temp['TD']>=temp['RxRSI']].count()
  
-    temp['pulmHR'] = hr_pulm(temp['TD'])
-    temp.loc[(temp['side']=='L'), 'cardHR'] = rr_card(temp.loc[(temp['side']=='L'), ['TD']], 'L')
-    temp.loc[(temp['side']=='R'), 'cardHR'] = rr_card(temp.loc[(temp['side']=='R'), ['TD']], 'R')
+    # temp['pulmHR'] = hr_pulm(temp['TD'])
+    # temp.loc[(temp['side']=='L'), 'cardHR'] = rr_card(temp.loc[(temp['side']=='L'), ['TD']], 'L')
+    # temp.loc[(temp['side']=='R'), 'cardHR'] = rr_card(temp.loc[(temp['side']=='R'), ['TD']], 'R')
     
     # model penalized survival 
-    surv = []
-    # noboost_count = temp[temp['TD']==low].count()
-    # boost_count = temp[temp['TD']==high].count()
-    for index, patient in temp.iterrows():
+    surv1 = []    
+    for index, patient in grp1.iterrows():
         
         # select based on whether or not RxRSI is met
         if patient['TD']>=patient['RxRSI']: lc = s1(t)
         else: lc = s2(t)
             
         # adjust for tox (penalized local control)
-        plc = np.power(lc, np.exp(patient['pulmHR'])*patient['cardHR'])
-        surv.append(plc)
-        
-    temp['surv'] = surv # unnecessary line
+        plc = adj_surv(lc, patient['TD'], patient['side'])
+        surv1.append(plc)
     
-    return temp # boost_surv, noboost_surv
+    surv2 = []
+    for index, patient in grp2.iterrows():
+        
+        # select based on whether or not RxRSI is met
+        if patient['TD']>=patient['RxRSI']: lc = s1(t)
+        else: lc = s2(t)
+            
+        # adjust for tox (penalized local control)
+        plc = adj_surv(lc, patient['TD'], patient['side'])
+        surv2.append(plc)
+    
+    return surv1, surv2
 
+ 
+N = 26000
+rsi_distr = tcc['RSI']
+tmin = 0
+tmax = 10
+t = np.linspace(tmin, tmax) # time axis in years
+style = 'custom'
+repeats = 1
 
+curve1 = []
+curve2 = []
+var1 = []
+var2 = []
+for i in range(repeats):
+    
+    patients = pd.DataFrame(rsi_sample(N, rsi_distr), columns=['RSI'])
+    surv1, surv2 = trial(patients, t, style)
+    curve1.append(np.mean(surv1, axis=0))
+    curve2.append(np.mean(surv2, axis=0))
+    var1.append(np.var(surv1, axis=0))
+    var2.append(np.var(surv2, axis=0))
+    
+plc1 = np.mean(curve1, axis=0)
+plc2 = np.mean(curve2, axis=0)
+se1 = 0
+se2 = 0
+for i in range(repeats):
+    se1 += (N-1)*var1[i] + N*np.square(curve1[i]-plc1)
+    se2 += (N-1)*var2[i] + N*np.square(curve2[i]-plc2)
+se1 = np.sqrt(se1/(N*repeats-1))
+se2 = np.sqrt(se2/(N*repeats-1))
+
+fig, ax = plt.subplots() # figsize=(30,20)
+# should this be 2stdev?
+plt.fill_between(t, plc1-se1, plc1+se1, alpha=.3) 
+plt.fill_between(t, plc2-se2, plc2+se2, alpha=.3) 
+plt.plot(t, plc1, label='no boost')
+plt.plot(t, plc2, label='boost')
+plt.legend()
+plt.xlabel('Years')
+plt.ylabel('Percent event-free')
+plt.title(style+' survival comparison, n='+str(2*N)+', '+str(repeats)+' trials')
+ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
+plt.ylim(0,1)
+
+'''
 N = 200
 rsi_distr = tcc['RSI']
 t = np.linspace(0,10) # time axis in years
 rsi_l = np.exp(-n*d*cut/low) # minimum
 rsi_h = np.exp(-n*d*cut/high) 
-patients = pd.DataFrame(rsi_sample(N, rsi_distr), columns=['RSI'])
-
-# style = 'custom'
-# results = trial(patients, t, style)
-    
-# # average survival for each group
-# noboost_surv = np.mean(results.loc[results['trt']=='no boost']['surv'], axis=0)
-# noboost_err = np.std(list(results.loc[results['trt']=='no boost']['surv']), axis=0)
-# boost_surv = np.mean(results.loc[results['trt']=='boost']['surv'], axis=0)
-# boost_err = np.std(list(results.loc[results['trt']=='boost']['surv']), axis=0)
-
-# fig, ax = plt.subplots() # figsize=(30,20)
-# # should this be 2stdev?
-# plt.fill_between(t, boost_surv-boost_err, boost_surv+boost_err, alpha=.3) 
-# plt.fill_between(t, noboost_surv-noboost_err, noboost_surv+noboost_err, alpha=.3) 
-# plt.plot(t, boost_surv, label='boost')
-# plt.plot(t, noboost_surv, label='no boost')
-# plt.legend()
-# plt.xlabel('Years')
-# plt.ylabel('Percent event-free')
-# plt.title(style+' survival comparison, n='+str(2*N))
-# ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
-# plt.ylim(0,1)
-
+style = 'custom'
 
 fig = plt.figure(figsize=(35,10))
 from matplotlib.gridspec import GridSpec
@@ -821,3 +845,4 @@ plt.title(style+' survival comparison, n='+str(2*N))
 ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
 plt.ylim(0,1)
 
+'''
