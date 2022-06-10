@@ -36,8 +36,7 @@ ppf = norm.ppf
 
 # load data; alpha_g calculated with the constants below, then GARD calculated
 # with patient-specific n, d
-df = pd.read_csv('data.csv')
-# nsclc = pd.read_csv('/Users/Emily/tnbc/lc_data.csv')
+df = pd.read_csv('data_tnbc.csv')
 df = df.drop(columns=['Unnamed: 0'])
 tcc = pd.read_csv('TCCdata.csv')
 tcc.insert(1, 'Source', 'TCC')
@@ -46,7 +45,7 @@ tcc.insert(1, 'Source', 'TCC')
 d = 2
 beta = 0.05
 n = 1
-cut = 22
+cut = df['GARD'].median()
 '''
 ag = -np.log(df['RSI'])/(n*d)-beta*d
 df['alpha_g'] = ag
@@ -59,9 +58,9 @@ gard = n*d*(ag+beta*d)
 tcc['GARD'] = gard
 '''
 # set cut-point, standard-of-care (SOC) range
-gard_t = 22
-high = 66 
-low = 50 
+gard_t = df['GARD'].median()
+high = 66
+low = 50
 
 df = df.sort_values(by='GARD')
 nki = df.loc[df['Source'] == 'NKI_wboost']
@@ -89,7 +88,7 @@ plt.xlabel('Years')
 plt.ylabel('Event Probability')
 plt.ylim([0,1.1])
 
-# plot survival KM
+# plot survival KM (only MCC has this)
 km_surv_mcc = KaplanMeierFitter()
 km_surv_mcc.fit(mcc['Time_OS'],mcc['Event_OS'],label='Survival (MCC)')
 a2 = km_surv_mcc.plot(ci_show=False, color='royalblue')
@@ -99,39 +98,70 @@ plt.ylim([0,1.1])
 '''
 
 
-# histograms for 1a
-'''
-# stacked histo for RSI; uncomment the next 3 lines to see it all together
-# frames = [df,tcc]
-# result = pd.concat(frames)
-# df = result.reset_index()
+# =============================================================================
+# # histograms for 1a
+# 
+# # stacked histo for RSI; uncomment the next 3 lines to see it all together
+# # frames = [df,tcc]
+# # result = pd.concat(frames)
+# # df = result.reset_index()
+# 
+# f1 = plt.figure(figsize=(7,5)) #dpi=300
+# ax = f1.add_subplot(1,1,1)
+# sns.histplot(data=tcc, ax=ax, stat="count", multiple="stack", # or layer
+#              x="RSI", kde=True,
+#              palette="deep", hue="Source",
+#              element="bars", legend=False)
+# ax.set_title("RSI Distribution, TCC (n=98)")
+# ax.set_xlabel("RSI")
+# ax.set_ylabel("Count")
+# 
+# sns.histplot(data=tcc, x='RSI', kde=True, palette="deep")
+# ax.set_title("TCC Cohort: RSI Distribution")
+# ax.set_xlabel("RSI")
+# ax.set_ylabel("Count")
+# 
+# sns.histplot(data=df, x='RSI', kde=True, palette="deep") # hue="Source", multiple="layer", 
+# plt.title("RSI Distribution")
+# ax.set_xlabel("RSI")
+# ax.set_ylabel("Count")
+# 
+# # stacked histo for GARD
+# f2 = plt.figure(figsize=(7,5))
+# ax = f2.add_subplot(1,1,1)
+# sns.histplot(data=df, ax=ax, stat="count", #multiple="layer",
+#              x="GARD", kde=True,
+#              palette="deep", #hue="Source",
+#              element="bars", legend=True)
+# ax.set_title("GARD Distribution")
+# ax.set_xlabel("GARD")
+# ax.set_ylabel("Count")
+# =============================================================================
 
-f1 = plt.figure(figsize=(7,5),dpi=300)
-ax = f1.add_subplot(1,1,1)
-sns.histplot(data=tcc, ax=ax, stat="count", multiple="stack", # or layer
-             x="RSI", kde=True,
-             palette="deep", hue="Source",
-             element="bars", legend=False)
-ax.set_title("RSI Distribution, TCC (n=98)")
-ax.set_xlabel("RSI")
-ax.set_ylabel("Count")
 
-sns.histplot(data=tcc, x='RSI', kde=True, palette="deep")
-ax.set_title("TCC Cohort: RSI Distribution")
-ax.set_xlabel("RSI")
-ax.set_ylabel("Count")
+# =============================================================================
+# a = list(df['TD']) + list(df['GARD'])
+# b = list(['TD']*113) + list(['GARD']*113)
+# df2 = np.transpose(pd.DataFrame(data=[a,b]))
+# df2 = df2.rename(columns={0: "value", 1: "type"})
+# f2 = plt.figure(figsize=(7,5))
+# ax2 = f2.add_subplot(1,1,1)
+# sns.set_style('white')
+# sns.boxplot(data=df2, ax=ax2, x="value", color='white', y='type')
+# sns.stripplot(data=df2, ax=ax2, x="value", palette="deep", y="type")
+# # sns.boxplot(data=df, ax=ax2, x ="GARD", color='white', showfliers= False)
+# # sns.stripplot(data=df, ax=ax2, x ="GARD", palette="deep", hue="Source")
+# plt.ylabel('')
+# plt.show()
+# =============================================================================
 
-# stacked histo for GARD
-f2 = plt.figure(figsize=(7,5))
-ax = f2.add_subplot(1,1,1)
-sns.histplot(data=df, ax=ax, stat="count", multiple="stack",
-             x="GARD", kde=True,
-             palette="deep", hue="Source",
-             element="bars", legend=True)
-ax.set_title("GARD Stacked Histogram")
-ax.set_xlabel("GARD")
-ax.set_ylabel("Count")
-'''
+
+# =============================================================================
+# # joint plot
+# f5 = plt.figure(figsize=(7,5))
+# sns.jointplot(data=df, x=df['RSI'], y=df['GARD'], hue=df['Source'])
+# # plt.savefig('Figures/joint')
+# =============================================================================
 
 
 # run comparison KM for dataset based on a GARD cut-point
@@ -214,28 +244,7 @@ plt.xlabel('GARD cut-point')
 plt.ylabel('p-value')
 plt.yscale('log')
 plt.legend()
-
-# overlying KM event curves for cutoff GARD
-fig2 = a1.plot(color='tomato', ci_show=False, label='NKI above')
-b1.plot(ax=fig2, color='tomato', linestyle='dashed', ci_show=False, label='NKI below')
-a2.plot(ax=fig2, color='royalblue', ci_show=False, label='MCC above')
-b2.plot(ax=fig2, color='royalblue', linestyle='dashed', ci_show=False, label='MCC below')
-a3.plot(ax=fig2, color='black', ci_show=False, label='combined above')
-b3.plot(ax=fig2, color='black', linestyle='dashed', ci_show=False, label='combined below')
-plt.title('KM Event comparison by cohort for GARD_T ' + str(cut))
-plt.xlim([0,10])
-plt.ylim([0,1.1])
-plt.xlabel('Years')
-plt.yscale('linear')
-
-# KM survival curves for cutoff GARD
-fig3 = a4.plot(color='royalblue', ci_show=False, label='MCC above')
-b4.plot(ax=fig3, color='royalblue', linestyle='dashed', ci_show=False, label='MCC below')
-plt.title('KM Survival comparison by cohort for GARD_T ' + str(cut))
-plt.xlim([0,10])
-plt.ylim([0,1.1])
-plt.xlabel('Years')
-plt.yscale('linear')
+  
 
 # finding min
 coeff = np.polyfit(gard2, p_vals2, 6)
@@ -294,131 +303,134 @@ def s2(t):
     return np.exp(-np.power(t/s2_lambda, s2_rho))
 
 
-# making figure 1b
-# sort by RxRSI
-df2 = df.sort_values(by='RxRSI').reset_index().drop(columns=['index'])
-'''
-# group relative to the SOC range
-hlines = []
-llines = []
-for i in range(len(df2)):
-    y = df2['RxRSI'].loc[i] 
-    if y < low:
-        llines.append([(i+1,y),(i+1,low)])
-    if y > high:
-        hlines.append([(i+1,high),(i+1,y)])
-# percentages for legend
-lperc = round(100*len(llines)/len(df2))
-hperc = round(100*len(hlines)/len(df2))
-mperc = 100 - lperc - hperc
-# below here actually makes the plot
-hlinecoll = matcoll.LineCollection(hlines, colors='tomato')
-llinecoll = matcoll.LineCollection(llines, colors='royalblue')
-fig, ax = plt.subplots(dpi=400)
-ax.add_collection(hlinecoll)
-ax.add_collection(llinecoll)
-plt.scatter(np.linspace(1,len(df2),len(df2)),df2['RxRSI'],c=df2['RxRSI'],cmap='coolwarm')
-plt.axhline(y=low,color='gray')
-plt.axhline(y=high,color='gray')
-plt.xlim([0,len(df2)])
-plt.ylim([10,110])
-plt.xlabel('Patient ID')
-plt.ylabel('RxRSI (Gy) for GARD_T = '+str(gard_t))
-plt.text(5, 20, str(lperc)+'% of patients require <'+str(low)+'Gy')
-plt.text(15, 52, str(mperc)+'% of patients receive RxRSI \n within SOC range')
-plt.text(40, 80, str(hperc)+'% of patients require >'+str(high)+'Gy')
-plt.show()
-'''
+# # making figure 1b
+# # sort by RxRSI
+# df2 = df.sort_values(by='RxRSI').reset_index().drop(columns=['index'])
 
-'''
-# fig 1c (need to run the part for 1b first though)
-# CAUTION the color cutoff depends on the bin arrangement
-# the PDF is also scaled manually
-fig, ax = plt.subplots()
-xmax = round(max(df['RxRSI']/20))*20 - 2
-xint = round(max(df['RxRSI']/20))*10
-x = np.linspace(0,xmax,xint)
-array = df['RxRSI']
-N, bins, patches = ax.hist(array,bins=x)
-bw = 1.2*array.std()*np.power(array.size,-1/5)
-kde = stats.gaussian_kde(array)
-scale = 350 # idk if this is the right scale but it's eyeballed
-curve = scale*kde(x)
-for i in range(0,int(low/2)):
-    patches[i].set_facecolor('royalblue')
-for i in range(int(low/2),int(high/2)):    
-    patches[i].set_facecolor('gray')
-for i in range(int(high/2),xint-1):
-    patches[i].set_facecolor('tomato') 
+# # group relative to the SOC range
+# hlines = []
+# llines = []
+# for i in range(len(df2)):
+#     y = df2['RxRSI'].loc[i] 
+#     if y < low:
+#         llines.append([(i+1,y),(i+1,low)])
+#     if y > high:
+#         hlines.append([(i+1,high),(i+1,y)])
+# # percentages for legend
+# lperc = round(100*len(llines)/len(df2))
+# hperc = round(100*len(hlines)/len(df2))
+# mperc = 100 - lperc - hperc
+# # below here actually makes the plot
+# hlinecoll = matcoll.LineCollection(hlines, colors='tomato')
+# llinecoll = matcoll.LineCollection(llines, colors='royalblue')
+# fig, ax = plt.subplots(dpi=200) #dpi=400
+# ax.add_collection(hlinecoll)
+# ax.add_collection(llinecoll)
+# plt.scatter(np.linspace(1,len(df2),len(df2)),df2['RxRSI'],c=df2['RxRSI'],cmap='coolwarm')
+# plt.axhline(y=low,color='gray')
+# plt.axhline(y=high,color='gray')
+# plt.xlim([0,len(df2)])
+# plt.ylim([10,110])
+# plt.xlabel('Patient ID')
+# plt.ylabel('RxRSI (Gy) for GARD_T = '+str(round(gard_t,1)))
+# plt.text(2, 20, str(lperc)+'% of patients require <'+str(low)+'Gy')
+# plt.text(2, 55, str(mperc)+'% of patients receive RxRSI \n within SOC range')
+# plt.text(25, 80, str(hperc)+'% of patients require >'+str(high)+'Gy')
+# plt.show()
+
+
+# =============================================================================
+# # fig 1c (need to run the part for 1b first though)
+# # CAUTION the color cutoff depends on the bin arrangement
+# # the PDF is also scaled manually
+# fig, ax = plt.subplots()
+# xmax = round(max(df['RxRSI']/20))*20 - 2
+# xint = round(max(df['RxRSI']/20))*10
+# x = np.linspace(0,xmax,xint)
+# array = df['RxRSI']
+# N, bins, patches = ax.hist(array,bins=x)
+# bw = 1.2*array.std()*np.power(array.size,-1/5)
+# kde = stats.gaussian_kde(array)
+# scale = 350 # idk if this is the right scale but it's eyeballed
+# curve = scale*kde(x)
+# for i in range(0,int(low/2)):
+#     patches[i].set_facecolor('royalblue')
+# for i in range(int(low/2),int(high/2)):    
+#     patches[i].set_facecolor('gray')
+# for i in range(int(high/2),xint-1):
+#     patches[i].set_facecolor('tomato') 
+# # plt.axvline(x=low, color='gray', linestyle='dashed')
+# # plt.axvline(x=high, color='gray', linestyle='dashed')
+# plt.xlabel("RxRSI for TCC TNBC")
+# plt.plot(x, curve, linestyle="dashed", color='black')
+#     
+#     
+# # plot 2a
+# # the different 'x' may get confusing here
+# pdf_scaled = kde(x)/max(kde(x))
+# plt.fill_between(x, y1=pdf_scaled, y2=0, alpha=0.3) #, label="PDF"
+# pdf = kde.evaluate(x)/sum(kde.evaluate(x))
+# cdf = np.cumsum(pdf)
+# plt.plot(x, cdf, label="TCP")
 # plt.axvline(x=low, color='gray', linestyle='dashed')
 # plt.axvline(x=high, color='gray', linestyle='dashed')
-plt.xlabel("RxRSI for TCC TNBC")
-plt.plot(x, curve, linestyle="dashed", color='black')
-    
-    
-# plot 2a
-# the different 'x' may get confusing here
-pdf_scaled = kde(x)/max(kde(x))
-plt.fill_between(x, y1=pdf_scaled, y2=0, alpha=0.3) #, label="PDF"
-pdf = kde.evaluate(x)/sum(kde.evaluate(x))
-cdf = np.cumsum(pdf)
-plt.plot(x, cdf, label="TCP")
-plt.axvline(x=low, color='gray', linestyle='dashed')
-plt.axvline(x=high, color='gray', linestyle='dashed')
-plt.xlabel("Dose (Gy)")
-plt.ylabel("TCP")
-# plt.legend()
-plt.show()'''
+# plt.xlabel("Dose (Gy)")
+# plt.ylabel("TCP")
+# # plt.legend()
+# plt.show()
+# =============================================================================
 
 
-# get coefficients for calculating cardiac/pulm radiation doses from total breast dose
-dosi = pd.read_csv('dosi_summ.csv') #dosimetry data for fits
-coeffL = np.polyfit(dosi['Total Dose'], dosi['MHD_L'], 1) 
-coeffR = np.polyfit(dosi['Total Dose'], dosi['MHD_R'], 1)
-coeffLung = np.polyfit(dosi['Total Dose'], dosi['MLD'], 1)
-
-# calc mean heart dose then card RR from total breast dose
-def rr_card(td, side=None, CI=None):
-    
-    mhdL = np.poly1d(coeffL)
-    mhdR = np.poly1d(coeffR)
-    
-    card_slope = 0.074
-    if CI == 'upper': card_slope = 0.145
-    elif CI == 'lower': card_slope = 0.029
-    
-    if side==None: rr = 1 + card_slope * (mhdL(td)-mhdL(0)+mhdR(td)-mhdR(0))/2
-    if side == 'L': rr = 1 + card_slope * (mhdL(td)-mhdL(0))
-    if side == 'R': rr = 1 + card_slope * (mhdR(td)-mhdR(0))
-            
-    return rr
-
-    
-# calc mean lung dose then pulm HR from total breast dose
-def hr_pulm(td, CI=None):
-    
-    mld = np.poly1d(coeffLung)
-    MLD = mld(td)
-    
-    # constants from QUANTEC lung
-    b0 = -3.87 
-    b1 = 0.126  
-    
-    # for relative to dose 0
-    constant = np.exp(b0)/(1+np.exp(b0))
-    
-    # TD50 = 30.75 [28.7–33.9] Gy
-    if CI == 'upper':
-        b0 = -3.33
-        b1 = .153
-    elif CI == 'lower': 
-        b0 = -4.49
-        b1 = .100
-        
-    hr = np.exp(b0+b1*MLD)/(1+np.exp(b0+b1*MLD)) - constant
-       
-    return hr
-
+# =============================================================================
+# # get coefficients for calculating cardiac/pulm radiation doses from total breast dose
+# dosi = pd.read_csv('dosi_summ.csv') #dosimetry data for fits
+# coeffL = np.polyfit(dosi['Total Dose'], dosi['MHD_L'], 1) 
+# coeffR = np.polyfit(dosi['Total Dose'], dosi['MHD_R'], 1)
+# coeffLung = np.polyfit(dosi['Total Dose'], dosi['MLD'], 1)
+# 
+# # calc mean heart dose then card RR from total breast dose
+# def rr_card(td, side=None, CI=None):
+#     
+#     mhdL = np.poly1d(coeffL)
+#     mhdR = np.poly1d(coeffR)
+#     
+#     card_slope = 0.074
+#     if CI == 'upper': card_slope = 0.145
+#     elif CI == 'lower': card_slope = 0.029
+#     
+#     if side==None: rr = 1 + card_slope * (mhdL(td)-mhdL(0)+mhdR(td)-mhdR(0))/2
+#     if side == 'L': rr = 1 + card_slope * (mhdL(td)-mhdL(0))
+#     if side == 'R': rr = 1 + card_slope * (mhdR(td)-mhdR(0))
+#             
+#     return rr
+# 
+#     
+# # calc mean lung dose then pulm HR from total breast dose
+# def hr_pulm(td, CI=None):
+#     
+#     mld = np.poly1d(coeffLung)
+#     MLD = mld(td)
+#     
+#     # constants from QUANTEC lung
+#     b0 = -3.87 
+#     b1 = 0.126  
+#     
+#     # for relative to dose 0
+#     constant = np.exp(b0)/(1+np.exp(b0))
+#     
+#     # TD50 = 30.75 [28.7–33.9] Gy
+#     if CI == 'upper':
+#         b0 = -3.33
+#         b1 = .153
+#     elif CI == 'lower': 
+#         b0 = -4.49
+#         b1 = .100
+#         
+#     hr = np.exp(b0+b1*MLD)/(1+np.exp(b0+b1*MLD)) - constant
+#        
+#     return hr
+# 
+# =============================================================================
     
 '''# fig 2b
 td = np.linspace(0,90,91)
@@ -471,6 +483,30 @@ plt.xlabel("Dose (Gy)")
 plt.ylabel("TCP")
 plt.legend(fontsize=9)
 plt.show()'''
+
+
+# =============================================================================
+# # KDEs of GARD by TNM
+# temp = df[(~df['pTNM'].isnull()) & (df['pTNM']!=0)]
+# temp = temp.sort_values(by='pTNM')
+# fig = sns.kdeplot(data=temp, x='GARD', hue='pTNM', palette='Blues', fill=True, common_norm=False, alpha=.5, linewidth=0.1)
+# fig.set_yticklabels([])
+# fig.set_ylabel('')
+# plt.title('GARD distribution grouped by TNM stage')
+# 
+# # hist version
+# sns.histplot(data=temp, x='GARD', kde=True, hue="pTNM", multiple="layer", palette="deep") # 
+# fig.set_yticklabels([])
+# fig.set_ylabel('')
+# plt.title('GARD distribution grouped by TNM stage')
+# 
+# one = df[df['pTNM']=='I']
+# two = df[df['pTNM']=='II']
+# three = df[df['pTNM']=='III']
+# stats.ks_2samp(one['GARD'],two['GARD'])
+# stats.ks_2samp(three['GARD'],two['GARD'])
+# stats.ks_2samp(three['GARD'],one['GARD'])
+# =============================================================================
 
 
 '''# supp 2 Gaussian mixture modeling to compare modes of different cohorts? or does KS compare
@@ -627,144 +663,229 @@ fig.subplots_adjust(wspace=.1,left=.04, right= .8)
 
 # plt.savefig('/Users/geoffreysedor/gui_app/Supplemental/Figures/'+'dist_comparison', dpi =300) #, edgecolor='black', linewidth=4)'''
 
-# individual ntcp
+# =============================================================================
+# # individual ntcp
+# 
+# # for 2N patients, draw from RSI distribution
+# def rsi_sample(N, distr):
+# 
+#     # for some reason this was originally giving identical samples but seems fine now
+#     kde = stats.gaussian_kde(distr)
+#     patients = kde.resample(2*N).flatten()
+#     patients[patients<0] = 0.001
+#     # rsi_sample = np.random.normal(loc=0.4267245088495575, scale=0.11221246412456044, size=2*N)
+#     return patients
+# 
+# def adj_surv(surv, td, side=None, CI=None):
+#     
+#     rr = rr_card(td, side, CI)
+#     hr = hr_pulm(td, CI)
+#     adj = np.power(surv, np.exp(hr)*rr)
+#         
+#     return adj
+# 
+# rsi_l = np.exp(-n*d*cut/low) # minimum RSI dose
+# rsi_h = np.exp(-n*d*cut/high) 
+# 
+# # returns penalized survival curves for 2 treatment groups (control and boosted)
+# # calls s1, s2
+# def trial(temp, t, style):
+#     
+#     N = int(len(temp)/2)
+#     
+#     # calculate GARD, RxRSI 
+#     # assumes 2Gy dose
+#     temp['RxRSI'] = -n*d*cut/np.log(temp['RSI'])
+#     # initialize settings
+#     temp['side'] = list('LR'*N)
+#     temp['trt'] = 'no boost'
+#     temp['TD'] = low
+#     
+#     grp1 = temp[:N].copy()
+#     grp2 = temp[N:].copy()
+#     
+#     if style == 'random': # randomized trial
+# 
+#         grp2['trt'] = 'boost'
+#         grp2['TD'] = high
+#         
+#     # for boost grp, only RSI in middle range get boost
+#     if style == 'sorted': 
+#      
+#         grp2.loc[((grp2['RSI']>rsi_l) & (grp2['RSI']<rsi_h)),'TD'] = high 
+#         grp2.loc[(grp2['TD']==high), 'trt'] = 'boost'
+#         
+#     # judging by results this may be glitching
+#     # NEED TO CHECK THESE CLIP MIN/MAX
+#     if style == 'custom': # for boost grp, TD = RxRSI within range
+# 
+#         grp2['trt'] = 'boost'
+#         grp2['TD'] = list(grp2['RxRSI'].clip(45, 80))
+#      
+#     noboost_count = grp2[grp2['TD']==low].count()
+#     boost_count = grp2[grp2['TD']>low].count()
+#     
+#     # temp = pd.concat([grp1, grp2])
+#     
+# #     temp[temp['TD']>=temp['RxRSI']].count()
+#  
+#     # temp['pulmHR'] = hr_pulm(temp['TD'])
+#     # temp.loc[(temp['side']=='L'), 'cardHR'] = rr_card(temp.loc[(temp['side']=='L'), ['TD']], 'L')
+#     # temp.loc[(temp['side']=='R'), 'cardHR'] = rr_card(temp.loc[(temp['side']=='R'), ['TD']], 'R')
+#     
+#     # model penalized survival 
+#     surv1 = []    
+#     for index, patient in grp1.iterrows():
+#         
+#         # select based on whether or not RxRSI is met
+#         if patient['TD']>=patient['RxRSI']: lc = s1(t)
+#         else: lc = s2(t)
+#             
+#         # adjust for tox (penalized local control)
+#         plc = adj_surv(lc, patient['TD'], patient['side'])
+#         surv1.append(plc)
+#     
+#     surv2 = []
+#     for index, patient in grp2.iterrows():
+#         
+#         # select based on whether or not RxRSI is met
+#         if patient['TD']>=patient['RxRSI']: lc = s1(t)
+#         else: lc = s2(t)
+#             
+#         # adjust for tox (penalized local control)
+#         plc = adj_surv(lc, patient['TD'], patient['side'])
+#         surv2.append(plc)
+#     
+#     return surv1, surv2
+# =============================================================================
 
-# for 2N patients, draw from RSI distribution
-def rsi_sample(N, distr):
-
-    # for some reason this was originally giving identical samples but seems fine now
-    kde = stats.gaussian_kde(distr)
-    patients = kde.resample(2*N).flatten()
-    patients[patients<0] = 0.001
-    # rsi_sample = np.random.normal(loc=0.4267245088495575, scale=0.11221246412456044, size=2*N)
-    return patients
-
-def adj_surv(surv, td, side=None, CI=None):
-    
-    rr = rr_card(td, side, CI)
-    hr = hr_pulm(td, CI)
-    adj = np.power(surv, np.exp(hr)*rr)
-        
-    return adj
-
-rsi_l = np.exp(-n*d*cut/low) # minimum RSI dose
-rsi_h = np.exp(-n*d*cut/high) 
-
-# returns UNPENALIZED survival curves for 2 treatment groups (control and boosted)
-# calls s1, s2
-def trial(temp, t, style):
-    
-    N = int(len(temp)/2)
-    
-    # calculate GARD, RxRSI 
-    # assumes 2Gy dose
-    temp['RxRSI'] = -n*d*cut/np.log(temp['RSI'])
-    # initialize settings
-    temp['side'] = list('LR'*N)
-    temp['trt'] = 'no boost'
-    temp['TD'] = low
-    
-    grp1 = temp[:N].copy()
-    grp2 = temp[N:].copy()
-    
-    if style == 'random': # randomized trial
-
-        grp2['trt'] = 'boost'
-        grp2['TD'] = high
-        
-    # for boost grp, only RSI in middle range get boost
-    if style == 'sorted': 
-     
-        grp2.loc[((grp2['RSI']>rsi_l) & (grp2['RSI']<rsi_h)),'TD'] = high 
-        grp2.loc[(grp2['TD']==high), 'trt'] = 'boost'
-        
-    # judging by results this may be glitching
-    # NEED TO CHECK THESE CLIP MIN/MAX
-    if style == 'custom': # for boost grp, TD = RxRSI within range
-
-        grp2['trt'] = 'boost'
-        grp2['TD'] = list(grp2['RxRSI'].clip(45, 80))
-     
-    noboost_count = grp2[grp2['TD']==low].count()
-    boost_count = grp2[grp2['TD']>low].count()
-    
-    # temp = pd.concat([grp1, grp2])
-    
-#     temp[temp['TD']>=temp['RxRSI']].count()
  
-    # temp['pulmHR'] = hr_pulm(temp['TD'])
-    # temp.loc[(temp['side']=='L'), 'cardHR'] = rr_card(temp.loc[(temp['side']=='L'), ['TD']], 'L')
-    # temp.loc[(temp['side']=='R'), 'cardHR'] = rr_card(temp.loc[(temp['side']=='R'), ['TD']], 'R')
-    
-    # model penalized survival 
-    surv1 = []    
-    for index, patient in grp1.iterrows():
-        
-        # select based on whether or not RxRSI is met
-        if patient['TD']>=patient['RxRSI']: lc = s1(t)
-        else: lc = s2(t)
-            
-        # adjust for tox (penalized local control)
-        plc = adj_surv(lc, patient['TD'], patient['side'])
-        surv1.append(plc)
-    
-    surv2 = []
-    for index, patient in grp2.iterrows():
-        
-        # select based on whether or not RxRSI is met
-        if patient['TD']>=patient['RxRSI']: lc = s1(t)
-        else: lc = s2(t)
-            
-        # adjust for tox (penalized local control)
-        plc = adj_surv(lc, patient['TD'], patient['side'])
-        surv2.append(plc)
-    
-    return surv1, surv2
+# =============================================================================
+# N = 15
+# rsi_distr = pd.concat([nki['RSI'],tcc['RSI']]) #df['RSI'] or tcc['RSI']
+# tmin = 0
+# tmax = 10
+# t = np.linspace(tmin, tmax) # time axis in years
+# style = 'sorted'
+# repeats = 20
+# 
+# curve1 = []
+# curve2 = []
+# var1 = []
+# var2 = []
+# for i in range(repeats):
+#     
+#     patients = pd.DataFrame(rsi_sample(N, rsi_distr), columns=['RSI'])
+#     surv1, surv2 = trial(patients, t, style)
+#     curve1.append(np.mean(surv1, axis=0))
+#     curve2.append(np.mean(surv2, axis=0))
+#     # var1.append(np.var(surv1, axis=0))
+#     # var2.append(np.var(surv2, axis=0))
+#     
+#     
+# plc1 = np.mean(curve1, axis=0)
+# lower1 = np.percentile(curve1, 2.5, axis=0)
+# upper1 = np.percentile(curve1, 97.5, axis=0)
+# plc2 = np.mean(curve2, axis=0)
+# lower2 = np.percentile(curve2, 2.5, axis=0)
+# upper2 = np.percentile(curve2, 97.5, axis=0)
+# # se1 = np.std(curve1, axis=0)
+# # se2 = np.std(curve2, axis=0)
+# # se1 = 0
+# # se2 = 0
+# # for i in range(repeats):
+# #     se1 += (N-1)*var1[i] + N*np.square(curve1[i]-plc1)
+# #     se2 += (N-1)*var2[i] + N*np.square(curve2[i]-plc2)
+# # se1 = np.sqrt(se1/(N*repeats-1))
+# # se2 = np.sqrt(se2/(N*repeats-1))
+# 
+# fig, ax = plt.subplots() # figsize=(30,20)
+# plt.fill_between(t, lower1, upper1, alpha=.3) 
+# plt.fill_between(t, lower2, upper2, alpha=.3) 
+# # plt.fill_between(t, plc1-2*se1, plc1+2*se1, alpha=.3) 
+# # plt.fill_between(t, plc2-2*se2, plc2+2*se2, alpha=.3) 
+# plt.plot(t, plc1, label='no boost')
+# plt.plot(t, plc2, label='boost')
+# plt.legend()
+# plt.xlabel('Years')
+# plt.ylabel('Percent free of local recurrence')
+# # plt.title(style+' survival comparison, n='+str(2*N)+', '+str(repeats)+' trials')
+# ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
+# plt.ylim(0,1)
+# 
+# print(N, repeats)
+# print(lower1[-1], upper1[-1])
+# print(lower2[-1], upper2[-1])
+# # print(plc1[-1]-2*se1[-1], plc1[-1]+2*se1[-1])
+# # print(plc2[-1]-2*se2[-1], plc2[-1]+2*se2[-1])
+# =============================================================================
 
- 
-N = 26000
-rsi_distr = tcc['RSI']
-tmin = 0
-tmax = 10
-t = np.linspace(tmin, tmax) # time axis in years
-style = 'custom'
-repeats = 1
 
-curve1 = []
-curve2 = []
-var1 = []
-var2 = []
-for i in range(repeats):
-    
-    patients = pd.DataFrame(rsi_sample(N, rsi_distr), columns=['RSI'])
-    surv1, surv2 = trial(patients, t, style)
-    curve1.append(np.mean(surv1, axis=0))
-    curve2.append(np.mean(surv2, axis=0))
-    var1.append(np.var(surv1, axis=0))
-    var2.append(np.var(surv2, axis=0))
-    
-plc1 = np.mean(curve1, axis=0)
-plc2 = np.mean(curve2, axis=0)
-se1 = 0
-se2 = 0
-for i in range(repeats):
-    se1 += (N-1)*var1[i] + N*np.square(curve1[i]-plc1)
-    se2 += (N-1)*var2[i] + N*np.square(curve2[i]-plc2)
-se1 = np.sqrt(se1/(N*repeats-1))
-se2 = np.sqrt(se2/(N*repeats-1))
+# from lifelines import CoxPHFitter
 
-fig, ax = plt.subplots() # figsize=(30,20)
-# should this be 2stdev?
-plt.fill_between(t, plc1-se1, plc1+se1, alpha=.3) 
-plt.fill_between(t, plc2-se2, plc2+se2, alpha=.3) 
-plt.plot(t, plc1, label='no boost')
-plt.plot(t, plc2, label='boost')
-plt.legend()
-plt.xlabel('Years')
-plt.ylabel('Percent event-free')
-plt.title(style+' survival comparison, n='+str(2*N)+', '+str(repeats)+' trials')
-ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: '{:.0%}'.format(y))) 
-plt.ylim(0,1)
+# temp = df[['Event','Time','GARD']]
+# temp['Time'].replace(0,0.001,inplace=True)
+# model = CoxPHFitter()
+# model.fit(df=temp, duration_col='Time', event_col='Event')
+# cox = model.summary
+# print('MCC data, Cox model OS summary')
+# print(cox)
+
+# temp = mcc[['Event_OS','Time_OS','GARD']]
+# temp['Time_OS'].replace(0,0.001,inplace=True)
+# model = CoxPHFitter()
+# model.fit(df=temp, duration_col='Time_OS', event_col='Event_OS')
+# cox = model.summary
+# print('MCC data, Cox model OS summary')
+# print(cox)
+
+
+# =============================================================================
+# # TNM AUC(t)
+# temp = df[:]
+# tmax = round(max(df['Time_OS']))
+# 
+# times = []
+# sens_tnm = []
+# spec_tnm = []
+# for i in range(2,tmax):
+#    high_die = len(temp[(temp['pTNM'] == 3) & (temp['Event'] == 1) & (temp['Time']<=i)]) 
+#    high_live = len(temp[(temp['pTNM'] == 3)]) - high_die
+#    low_die = len(temp[((temp['pTNM'] == 1) | (temp['pTNM'] == 2)) & (temp['Event'] == 1) & (temp['Time']<=i)]) 
+#    low_live = len(temp[((temp['pTNM'] == 1) | (temp['pTNM'] == 2))]) - low_die
+#    sens_tnm.append(high_die/(high_die + low_die))
+#    spec_tnm.append(low_live/(low_live + high_live))
+#    times.append(i)
+# auc_tnm = np.array(sens_tnm)+np.array(spec_tnm)
+# auc_tnm /= 2
+# 
+# plt.plot(times, auc_tnm)
+# plt.ylabel('AUC')
+# plt.xlabel('time (years)')
+# plt.ylim([0,1])
+# plt.title('Local Control, TNM')
+# 
+# times = []
+# sens_tnm = []
+# spec_tnm = []
+# for i in range(2,tmax):
+#    high_die = len(temp[(temp['pTNM'] == 3) & (temp['Event_OS'] == 1) & (temp['Time_OS']<=i)]) 
+#    high_live = len(temp[(temp['pTNM'] == 3)]) - high_die
+#    low_die = len(temp[((temp['pTNM'] == 1) | (temp['pTNM'] == 2)) & (temp['Event_OS'] == 1) & (temp['Time_OS']<=i)]) 
+#    low_live = len(temp[((temp['pTNM'] == 1) | (temp['pTNM'] == 2))]) - low_die
+#    sens_tnm.append(high_die/(high_die + low_die))
+#    spec_tnm.append(low_live/(low_live + high_live))
+#    times.append(i)
+# auc_tnm = np.array(sens_tnm)+np.array(spec_tnm)
+# auc_tnm /= 2
+# 
+# plt.plot(times, auc_tnm)
+# plt.ylabel('AUC')
+# plt.xlabel('time (years)')
+# plt.ylim([0,1])
+# plt.title('OS, TNM')
+# =============================================================================
+
 
 '''
 N = 200
