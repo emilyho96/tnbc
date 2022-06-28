@@ -45,7 +45,6 @@ tcc.insert(1, 'Source', 'TCC')
 d = 2
 beta = 0.05
 n = 1
-cut = df['GARD'].median()
 '''
 ag = -np.log(df['RSI'])/(n*d)-beta*d
 df['alpha_g'] = ag
@@ -58,6 +57,7 @@ gard = n*d*(ag+beta*d)
 tcc['GARD'] = gard
 '''
 # set cut-point, standard-of-care (SOC) range
+cut = df['GARD'].median()
 gard_t = df['GARD'].median()
 high = 66
 low = 50
@@ -303,10 +303,11 @@ def s2(t):
     return np.exp(-np.power(t/s2_lambda, s2_rho))
 
 
+# =============================================================================
 # # making figure 1b
 # # sort by RxRSI
 # df2 = df.sort_values(by='RxRSI').reset_index().drop(columns=['index'])
-
+# 
 # # group relative to the SOC range
 # hlines = []
 # llines = []
@@ -337,6 +338,7 @@ def s2(t):
 # plt.text(2, 55, str(mperc)+'% of patients receive RxRSI \n within SOC range')
 # plt.text(25, 80, str(hperc)+'% of patients require >'+str(high)+'Gy')
 # plt.show()
+# =============================================================================
 
 
 # =============================================================================
