@@ -1,0 +1,842 @@
+---
+title: "tnbc_r"
+output: html_document
+---
+
+
+  ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+# setup
+```{r libraries}
+library(gridExtra)
+library(grid)
+# library(ggstance)
+library(colorspace)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(survival)
+library(survminer)
+library(rms)
+library(knitr)
+library(rmdformats)
+library(xtable)
+library(ggplot2)
+library(reticulate)
+library(timeROC)
+
+# options(xtable.floating = FALSE, xtable.timestamp = "", xtable.comment = FALSE)
+# options(max.print="75")
+# knitr::opts_chunk$set(echo=FALSE, cache=FALSE, prompt=FALSE,tidy=TRUE,
+#                       comment=NA,message=FALSE,warning=FALSE)
+# opts_knit$set(width=75)
+```
+
+```{r import data}
+data <- read.csv(file="data_tnbc.csv")
+
+temp <- subset(data, pTNM!= 'NA', select=c(RSI, pTNM, Event_OS, Time_OS, Event, Time, GARD, n, d, Source))
+temp$stage <- rep(NA, nrow(temp))
+temp[temp$pTNM == "I" | temp$pTNM == "II", ][, "stage"] <- "low"
+temp[temp$pTNM == "III", ][, "stage"] <- "high"
+# summary(as.factor(temp$pTNM))
+temp$Source[temp$Source == 'MCC_wboost'] <- "MCC"
+temp$Source[temp$Source == 'NKI_wboost'] <- "NKI"
+temp$GARDneg = temp$GARD*(-1)
+temp$EQD2 <- temp$n*temp$d * (temp$d+10) / (2+10) # d=2,  alpha/beta = 10
+temp$GARD <- temp$n*temp$d * (0.05*(temp$d-2)-log(temp$RSI)/2) #n*d=2
+
+# OS only minus a couple of patients
+temp1 <- subset(temp, stage != 'NA')
+
+```
+
+```{r define summary.fit}
+# ---- summary of rms fit function ------ #
+summary.fit <- function(fit){
+  sum.tbl <- tibble("coef"=0,"exp(coef)"=0,"se"=0,"z"=0,"chi-sq"=0,"p"=0, "n"=0,"n.event"=0,"Dxy"=0)
+  coef <- unname(fit$coefficients)[1]
+  sum.tbl["coef"] <- coef
+  sum.tbl["exp(coef)"] <- exp(coef)[1]
+  se <- unname(sqrt(fit$var))[1]
+  sum.tbl["se"] <- se
+  zScore <- coef/se
+  sum.tbl["z"] <- zScore
+  sum.tbl["p"] <- (1-pnorm(abs(zScore),0,1))*2
+  sum.tbl["chi-sq"] <- anova(fit)[1,1]
+  sum.tbl <- round(sum.tbl,digits=3)
+  sum.tbl["n"] <- unname(fit$stats[1])
+  sum.tbl["n.event"] <- unname(fit$stats[2])
+  sum.tbl["Dxy"] <- unname(fit$stats[9])
+  sum.tbl
+}
+
+```
+
+```{r staging}
+library(Hmisc)
+temp <- subset(data, pTNM!= 'NA', select=c(RSI, pTNM, Event_OS, Time_OS, Event, Time, GARD))
+# temp$GARDneg = temp$GARD*(-1)
+
+rcorr.cens(temp$GARD, Surv(temp$Time,temp$Event))
+rcorr.cens(temp$pTNM, Surv(temp$Time,temp$Event))
+rcorr.cens(temp$TNM_flipped, Surv(temp$Time,temp$Event))
+
+nrow(subset(temp, pTNM==1 & GARD>=80))
+histogram(~temp$GARD|temp$pTNM,layout=c(1,3),nint=20,scales=list(relation='free'),xlab="GARD",ylab="Percent of Patients within TNM Stage")
+
+```
+
+# Dose-GARD Distribution Comparison
+```{r EQD GARD boxplots}
+library(patchwork)
+
+
+gardplot <- ggplot(temp) + 
+  theme(panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        panel.border = element_rect(colour = "black", fill=NA, size=1), 
+        axis.text.y=element_blank(),axis.ticks.y=element_blank()) + 
+  xlim(0,80) +
+  xlab("GARD") + ylab("") +
+  geom_boxplot(aes(x=GARD, y=2), color = 'gray50', outlier.shape = NA) +
+  geom_jitter(aes(x=GARD, y=2, color=Source), height = .15, size=0.8,alpha=.4)
+ 
+
+eqdplot <- ggplot(temp) + 
+  theme(panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        panel.border = element_rect(colour = "black", fill=NA, size=1), 
+        axis.text.y=element_blank(),axis.ticks.y=element_blank()) + 
+  xlim(0,80) +
+  xlab("EQD2 (Gy)") + ylab("") +
+  geom_boxplot(aes(x=EQD2, y=1), color = 'gray50', outlier.shape = NA) +
+  geom_jitter(aes(x=EQD2, y=1, color=Source), height = .15, size=0.8, alpha=.4)
+  
+
+eqdplot / gardplot
+
+```
+
+
+# KM curves + cutpoint
+```{r overall KM}
+
+# km_os_unfilt <- 
+ggsurvplot(fit=survfit(Surv(Time_OS, Event_OS) ~ 1, data=temp),
+           xlab = "Time (months)", xlim = c(0, 10), break.time.by = 1,
+           conf.int=FALSE, risk.table=TRUE,
+           ggtheme = theme(aspect.ratio = 0.5),
+           tables.theme =  theme(aspect.ratio = 0.06),
+           title = "OS"
+           )
+
+
+# km_lc_unfilt <- 
+ggsurvplot(fit=survfit(Surv(Time, Event) ~ 1, data=temp),
+           xlab = "Time (months)", xlim = c(0, 10), break.time.by = 1,
+           conf.int=FALSE, risk.table=TRUE,
+           ggtheme = theme(aspect.ratio = 0.5),
+           tables.theme =  theme(aspect.ratio = 0.06),
+           title = "LC"
+           )
+```
+
+```{r stratified}
+
+os_med = round(10*median(temp1$GARD))/10
+temp1$OS_strat = ""
+temp1[temp1$GARD >= os_med, ][, "OS_strat"] <- "High GARD"
+temp1[temp1$GARD < os_med, ][, "OS_strat"] <- "Low GARD"
+temp$LC_strat = ""
+lc_cut = 22
+temp$LC_strat = ""
+temp[temp$GARD >= lc_cut, ][, "LC_strat"] <- "High GARD"
+temp[temp$GARD < lc_cut, ][, "LC_strat"] <- "Low GARD"
+
+# OS stratified by median GARD 25.2
+OS_fit <- survfit(Surv(Time_OS, Event_OS) ~ OS_strat, data=temp1)
+LC_fit <- survfit(Surv(Time, Event) ~ LC_strat, data=temp)
+
+fit <- list(LC = LC_fit, OS = OS_fit)
+ggsurvplot(fit, data = temp, combine = TRUE, # Combine curves
+           risk.table = TRUE,                  # Add risk table
+           conf.int = FALSE,                    # Add confidence interval
+           censor = FALSE,                     # Remove censor points
+           tables.theme = theme_cleantable(),  # Clean risk table
+           colors = c("#d95f02", "#d95f02", "1b9e77", "1b9e77"), lty=c(3,1,3,1), 
+           # linetype = "strata",
+           xlab = "Time (years)",
+           xlim = c(0, 10),
+           break.time.by = 2, # break X axis in time intervals
+           legend.labs = c("LC, High GARD", "LC, Low GARD", "OS, High GARD", "OS, Low GARD")) 
+    
+```
+
+``` {r separate OS and LC stratified}
+
+ggsurvplot(OS_fit, 
+           data = temp, 
+           xlab = "Time (years)", xlim = c(0, 10), break.time.by = 1, 
+           legend.labs = c("GARD > 25.2", "GARD < 25.2"),
+           linetype = "strata",
+           color="1b9e77",
+           pval=TRUE, conf.int=FALSE, risk.table=TRUE) 
+
+ggsurvplot(LC_fit, 
+           data = temp, 
+           xlab = "Time (years)", xlim = c(0, 10), break.time.by = 1, 
+           legend.labs = c("GARD > 22", "GARD < 22"),
+           linetype = "strata",
+           color="#d95f02",
+           pval=TRUE, conf.int=FALSE, risk.table=TRUE)
+
+
+# ggsave("cut_os_unfilt.tiff", units="in", width=7, height=5, dpi=300, compression = 'lzw')
+
+
+```
+
+# AUC
+```{r ROC for TNM - WILL PROBABLY DELETE}
+# library(ROCit)
+# ROCit_gard <- rocit(score=temp$GARD,class=temp$Event_flipped)
+# plot(ROCit_gard, values=F)
+# summary(ROCit_gard)
+
+# install.packages('PRROC')
+# library(PRROC)
+# PRROC_obj <- roc.curve(scores.class0 = temp$GARD, weights.class0=temp$Event, curve=TRUE)
+# plot(PRROC_obj)
+
+t=10
+# high_die = nrow(subset(temp, stage=='high' & Event_OS==1 & Time_OS<=t))
+# high_live = nrow(subset(temp, stage=='high')) - high_die
+# low_die = nrow(subset(temp, stage=='low' & Event_OS==1 & Time_OS<=t))
+# low_live = nrow(subset(temp, stage=='low')) - low_die
+high_die = nrow(subset(temp, stage=='high' & Event==1 & Time<=t))
+high_live = nrow(subset(temp, stage=='high')) - high_die
+low_die = nrow(subset(temp, stage=='low' & Event==1 & Time<=t))
+low_live = nrow(subset(temp, stage=='low')) - low_die
+sens_tnm = high_die/(high_die + low_die)
+spec_tnm = spec_tnm = low_live/(low_live + high_live)
+auc = round((sens_tnm + spec_tnm)*50,1)
+
+myf<-function(x, x1=(1-spec_tnm), y1=sens_tnm, m=sens_tnm/(1-spec_tnm)){ 
+  firstInds<-intersect(which(x >= 0), which(x < x1)) 
+  secondInds<-intersect(which(x >= x1), which(x < 1))
+  y<-x
+  y[firstInds]<-m*x[firstInds]
+  y[secondInds]<-((1-sens_tnm)*x[secondInds]+spec_tnm+sens_tnm-1)/spec_tnm
+  y
+}
+x<-seq(0,1,0.001)
+# plot(x, myf(x))
+lab = paste("ROC at time t=",toString(t),", AUC=",auc)
+plot(x, myf(x), ylab="Sensitivity", xlab="1-Specificity", main=lab, col="white"); 
+lines(x, myf(x), col="blue");
+segments(x0=0,y0=0,x1=1,y1=1, lty=2)
+
+
+# t = seq(1, floor(max(temp$Time)),1)
+# sens_tnm = vector()
+# spec_tnm = vector()
+# for (i in t) {
+#    high_recur = nrow(subset(temp, stage=='high' & Event==1 & Time<=t(i)))
+#    high_lc = nrow(subset(temp, stage=='high')) - high_recur
+#    low_recur = nrow(subset(temp, stage=='low' & Event==1 & Time<=t(i)))
+#    low_lc = nrow(subset(temp, stage=='low')) - low_recur
+#    sens_tnm(i) = high_recur/(high_recur + low_recur)
+#    spec_tnm(i) = low_lc/(low_lc + high_lc)
+# }
+
+```
+
+```{r TNM nomo LC}
+dd <- datadist(temp)
+options(datadist='dd')
+f<-cph(Surv(Time, Event) ~ pTNM,
+       data = temp, surv=T, x=T, y=T)
+
+temp$lp <- f[["linear.predictors"]]
+
+timeROC_tnmLC<-timeROC(T=temp$Time, delta=temp$Event, marker=temp$lp,
+                  cause=1,weighting="marginal",
+                  times=seq(0,10,1), 
+                  iid=TRUE)
+
+plot(timeROC_tnmLC, time= 5)
+plot(timeROC_tnmLC, time= 10)
+
+timeROC_tnmLC[["AUC"]][6] # t=5
+confint(timeROC_tnmLC)[["CI_AUC"]][5,] # t=5
+timeROC_tnmLC[["AUC"]][11] # t=10
+confint(timeROC_tnmLC)[["CI_AUC"]][10,] # t=10
+```
+
+```{r TNM nomo OS}
+dd <- datadist(temp1)
+options(datadist='dd')
+f<-cph(Surv(Time, Event) ~ pTNM,
+       data = temp1, surv=T, x=T, y=T)
+
+temp1$lp <- f[["linear.predictors"]]
+
+timeROC_tnmOS<-timeROC(T=temp1$Time, delta=temp1$Event, marker=temp1$lp,
+                  cause=1,weighting="marginal",
+                  times=seq(0,10,1), 
+                  iid=TRUE)
+
+plot(timeROC_tnmOS, time= 5)
+# plot(timeROC_tnmOS, time= 10)
+
+timeROC_tnmOS[["AUC"]][6] # t=5
+confint(timeROC_tnmOS)[["CI_AUC"]][5,] # t=5
+# timeROC_tnmOS[["AUC"]][11] # t=10
+# confint(timeROC_tnmOS)[["CI_AUC"]][10,] # t=10
+```
+
+```{r GARD LC}
+temp$Event_flipped <- rep(NA, nrow(temp))
+temp[temp$Event == 0, ][, "Event_flipped"] <- 1
+temp[temp$Event == 1, ][, "Event_flipped"] <- 0
+
+timeROC_gardLC <- timeROC(T=temp$Time, delta=temp$Event, marker=temp$GARDneg,
+                  cause=1,weighting="marginal",
+                  times=seq(0,11,1), 
+                  iid=TRUE)
+
+plot(timeROC_gardLC, time= 5)
+plot(timeROC_gardLC, time= 10)
+
+timeROC_gardLC[["AUC"]][6] # t=5
+confint(timeROC_gardLC)[["CI_AUC"]][5,] # t=5
+timeROC_gardLC[["AUC"]][11] # t=10
+confint(timeROC_gardLC)[["CI_AUC"]][10,] # t=10
+```
+
+```{r GARD OS}
+temp1$Event_flipped <- rep(NA, nrow(temp1))
+temp1[temp1$Event == 0, ][, "Event_flipped"] <- 1
+temp1[temp1$Event == 1, ][, "Event_flipped"] <- 0
+
+timeROC_gardOS <- timeROC(T=temp1$Time, delta=temp1$Event, marker=temp1$GARDneg,
+                  cause=1,weighting="marginal",
+                  times=seq(0,11,1), 
+                  iid=TRUE)
+
+plot(timeROC_gardOS, time=5)
+# plot(timeROC_gardOS, time=10)
+
+timeROC_gardOS[["AUC"]][6] # t=5
+confint(timeROC_gardOS) [["CI_AUC"]][5,] # t=5
+# timeROC_gardOS[["AUC"]][11] # t=10
+# confint(timeROC_gardOS)[["CI_AUC"]][10,] # t=10
+```
+
+```{r combined LC/OS 5yr}
+# need to run the earlier blocks first
+time5 = 5
+
+gard_xLC5 <- timeROC_gardLC$FP[,which(timeROC_gardLC$times==time5)]
+gard_yLC5 <- timeROC_gardLC$TP[,which(timeROC_gardLC$times==time5)]
+leg1 = paste("GARD, LC, AUC =",
+             toString(round(timeROC_gardLC$AUC[which(timeROC_gardLC$times==time5)]*100,1)))
+
+tnm_xLC5 <- timeROC_tnmLC$FP[,which(timeROC_tnmLC$times==time5)]
+tnm_yLC5 <- timeROC_tnmLC$TP[,which(timeROC_tnmLC$times==time5)]
+leg2 = paste("TNM, LC, AUC =",
+             toString(round(timeROC_tnmLC$AUC[which(timeROC_tnmLC$times==time5)]*100,1)))
+
+gard_xOS5 <- timeROC_gardOS$FP[,which(timeROC_gardOS$times==time5)]
+gard_yOS5 <- timeROC_gardOS$TP[,which(timeROC_gardOS$times==time5)]
+leg3 = paste("GARD, OS, AUC =",
+             toString(round(timeROC_tnmOS$AUC[which(timeROC_tnmOS$times==time5)]*100,1)))
+
+tnm_xOS5 <- timeROC_tnmOS$FP[,which(timeROC_tnmOS$times==time5)]
+tnm_yOS5 <- timeROC_tnmOS$TP[,which(timeROC_tnmOS$times==time5)]
+leg4 = paste("TNM, OS, AUC =",
+             toString(round(timeROC_tnmOS$AUC[which(timeROC_tnmOS$times==time5)]*100,1)))
+
+plot(0,0,type="l",xlim=c(0,1),ylim=c(0,1),xlab="1-Specificity",ylab="Sensitivity")
+lines(gard_xLC5, gard_yLC5, col="#d95f02",lty=1)
+lines(tnm_xLC5, tnm_yLC5, col="#d95f02",lty=3)
+lines(gard_xOS5, gard_yOS5, col='#1b9e77',lty=1)
+lines(tnm_xOS5, tnm_yOS5, col='#1b9e77',lty=3)
+legend(.57, .3, legend=c(leg1, leg2, leg3, leg4),
+       col=c("#d95f02", "#d95f02", '#1b9e77', '#1b9e77'), lty=c(3,1,3,1), cex=0.8) # "black" '#00BA38', 
+abline(0,1,lty=2)
+```
+
+```{r combined LC 10yr}
+# no OS bc too few at risk at 10yrs
+# need to run the earlier blocks first
+
+time10 = 10
+
+tnm_xLC10 <- timeROC_tnmLC$FP[,which(timeROC_tnmLC$times==time10)]
+tnm_yLC10 <- timeROC_tnmLC$TP[,which(timeROC_tnmLC$times==time10)]
+leg1 = paste("TNM, LC, AUC =",
+             toString(round(timeROC_tnmLC$AUC[which(timeROC_tnmLC$times==time10)]*100,1)))
+
+gard_xLC10 <- timeROC_gardLC$FP[,which(timeROC_gardLC$times==time10)]
+gard_yLC10 <- timeROC_gardLC$TP[,which(timeROC_gardLC$times==time10)]
+leg2 = paste("GARD, LC, AUC =",
+             toString(round(timeROC_gardLC$AUC[which(timeROC_gardLC$times==time10)]*100,1)))
+
+plot(0,0,type="l",xlim=c(0,1),ylim=c(0,1),xlab="1-Specificity",ylab="Sensitivity")
+lines(tnm_xLC10, tnm_yLC10, col="#d95f02",lty=3)
+lines(gard_xLC10, gard_yLC10, col="#d95f02",lty=1)
+legend(.57, .3, legend=c(leg1, leg2),
+       col=c("#d95f02", "#d95f02"), lty=c(3,1), cex=0.8) 
+abline(0,1,lty=2)
+```
+
+
+# cox 
+```{r UVA GARD OS}
+temp_filt <- temp %>%
+  filter(Source == "MCC")
+
+# discrete
+midpt = median(temp_filt$GARD)
+temp_filt$GARD_dichotomic <- rep(NA, nrow(temp_filt))
+temp_filt[temp_filt$GARD >= midpt, ][, "GARD_dichotomic"] <- "High GARD"
+temp_filt[temp_filt$GARD < midpt, ][, "GARD_dichotomic"] <- "Low GARD"
+temp_filt$GARD_dichotomic = factor(temp_filt$GARD_dichotomic, levels = c("Low GARD","High GARD"))
+f_discrete <- cph(Surv(Time_OS, Event_OS) ~ GARD_dichotomic, data=temp_filt, x=T, y=T, surv=T)
+f_discrete
+
+# cts
+f_cont <- cph(Surv(Time_OS, Event_OS) ~ GARD, data=temp, x=T, y=T, surv=T)
+f_cont
+```
+
+```{r UVA GARD LC}
+temp_filt <- temp
+
+#discrete
+cut = 22
+temp_filt$GARD_dichotomic <- rep(NA, nrow(temp_filt))
+temp_filt[temp_filt$GARD >= cut, ][, "GARD_dichotomic"] <- "High GARD"
+temp_filt[temp_filt$GARD < cut, ][, "GARD_dichotomic"] <- "Low GARD"
+temp_filt$GARD_dichotomic = factor(temp_filt$GARD_dichotomic, levels = c("Low GARD","High GARD"))
+f_discrete <- cph(Surv(Time_OS, Event_OS) ~ GARD_dichotomic, data=temp_filt, x=T, y=T, surv=T)
+f_discrete
+
+#cts
+f_cont <- cph(Surv(Time, Event) ~ GARD, data=temp, x=T, y=T, surv=T)
+f_cont
+```
+
+```{r individual LC cox}
+f_LC<-cph(Surv(Time, Event) ~ GARD, data=data, x=T, y=T, surv = T)
+p_LC<-Predict(f_LC, GARD = seq(1,80,by=1))
+p_LC<-data.frame(p_LC) %>%
+   rename(yhatLC = 'yhat') %>%
+   rename(lowerLC = 'lower') %>%
+   rename(upperLC = 'upper')
+stats_LC <- summary.fit(f_LC) 
+stats_LC <- stats_LC %>%
+  rename(chisq = 'chi-sq') 
+
+ggplot(p_LC) + ggtitle("Local Control") + geom_line(aes(x=GARD,y=yhatLC), color = '#d95f02') +
+geom_abline(intercept=0, slope=0) +
+geom_ribbon(aes(x=GARD,ymax=upperLC,ymin=lowerLC, fill = '#d95f02'), alpha=.2) + 
+scale_x_continuous(expand = expansion(mult=0, add=0)) +
+# facet_wrap(~Outcome, nrow = 1) +
+xlab("GARD") + 
+ylab("log Relative Hazard") +
+theme_classic() +  theme(legend.position = "none") +
+theme(panel.border = element_rect(fill = rgb(1,1,1,0),size = .75)) + geom_label(data = stats_LC,
+             fill = rgb(.5,.5,.5,.1), hjust="left",
+             size=4, label.r = unit(2,"points"),
+             label.size = 0, show.legend = FALSE,
+             aes(label = sprintf("Coef = %.2f \nHR = %.2f \np = %.2f", coef, exp(coef), p), x=5, y=-3))
+
+```
+
+```{r individual OS cox}
+  
+f_OS<-cph(Surv(Time_OS, Event_OS) ~ GARD, data=data, x=T, y=T, surv = T)
+p_OS<-Predict(f_OS, GARD = seq(1,80,by=1))
+p_OS<-data.frame(p_OS) %>%
+   rename(yhatOS = yhat) %>%
+   rename(lowerOS = lower) %>%
+   rename(upperOS = upper)
+stats_OS <- summary.fit(f_OS) 
+stats_OS <- stats_OS %>%
+  rename(chisq = 'chi-sq') 
+
+# individual OS cox
+plotOS <- ggplot(p_OS) + geom_line(aes(x=GARD,y=yhat), color = '#1b9e77') +
+   geom_abline(intercept=0, slope=0) +
+   geom_ribbon(aes(x=GARD, ymax=upper, ymin=lower, fill = '#1b9e77'), alpha=.2) +
+   scale_x_continuous(expand = expansion(mult=0, add=0)) +
+   # facet_wrap(~Outcome, nrow = 1) +
+   xlab("GARD") + ylab("log Relative Hazard") +
+   theme_classic() +  theme(legend.position = "none") +
+   theme(panel.border = element_rect(fill = rgb(1,1,1,0),size = .75)) + geom_label(data = stats_OS,
+                fill = rgb(.5,.5,.5,.1), hjust="left",
+                size=4, label.r = unit(2,"points"),
+                label.size = 0, show.legend = FALSE,
+                aes(label = sprintf("OS \nCoef = %.2f \nHR = %.2f \np = %.2f", coef, exp(coef), p), x=5, y=-8))
+```
+
+```{r combined Cox (run prior cox boxes)}
+p_combined <- merge(p_LC,p_OS, by="GARD")
+plot_combined <- ggplot(p_combined) +
+   geom_line(aes(x=GARD,y=yhatLC), color = '#d95f02') +
+   geom_ribbon(aes(x=GARD,ymax=upperLC,ymin=lowerLC, fill = '#1b9e77'), alpha=.1) + 
+   theme(panel.border = element_rect(fill = rgb(1,1,1,0),size = .75)) + geom_label(data = stats_LC,
+                fill = rgb(.5,.5,.5,.1), hjust="left",
+                size=4, label.r = unit(2,"points"),
+                label.size = 0, show.legend = FALSE,
+                aes(label = sprintf("LC \nCoef = %.2f \nHR = %.2f \np = %.2f", coef, exp(coef), p), color='#1b9e77', x=5, y=-8)) +
+   geom_line(aes(x=GARD,y=yhatOS), color = '#1b9e77') + 
+   geom_abline(intercept=0, slope=0) +
+   geom_ribbon(aes(x=GARD, ymax=upperOS, ymin=lowerOS, fill = '#d95f02'), alpha=.2) +
+   scale_x_continuous(expand = expansion(mult=0, add=0)) + 
+   xlab("GARD") + ylab("log Relative Hazard") +
+   theme_classic() +  theme(legend.position = "none") +
+   theme(panel.border = element_rect(fill = rgb(1,1,1,0),size = .75)) + geom_label(data = stats_OS,
+                fill = rgb(.5,.5,.5,.1), hjust="left",
+                size=4, label.r = unit(2,"points"),
+                label.size = 0, show.legend = FALSE,
+                aes(label = sprintf("OS \nCoef = %.2f \nHR = %.2f \np = %.2f", coef, exp(coef), p), color='#d95f02', x=20, y=-8)) 
+
+plot_combined
+
+# ggsave('cox_combined.png', plot=plot_combined, path = NULL, width = 7, height = 5, dpi=1000)
+
+# library(patchwork)
+# 
+# plotLC + plotOS
+```
+
+
+# nomogram
+```{r setup}
+
+# temp_filt <- read.csv(file="GARD_HPVpos6.csv") %>% filter(RT == "definitive") %>% 
+#   rename(AJCC8 = 'TNM8') %>%
+#   rename(ECOG = 'ECOG.PS') %>% 
+#   mutate(ECOG = as.character(ECOG)) %>%
+#   mutate(ECOG = if_else(ECOG=='0','0','1or2')) %>%
+#   mutate(smoking = ifelse(smoking==0,NA,smoking))  %>%
+#   mutate(smoking = ifelse(smoking=='Never',0,1)) 
+  # %>% mutate(TNM = if_else(TNM=="I","I","II/III"))
+  # mutate(Time_OS = Time_OS/12) %>%
+
+# hist(x=temp$GARD,breaks=30)
+
+```
+
+
+creating the cph model:
+```{r}
+dd <- datadist(temp)
+options(datadist='dd')
+
+f_OS<-cph(Surv(Time_OS, Event_OS) ~ GARD + pTNM, 
+       data = temp1, surv=T, x=T, y=T)
+f_OS
+
+f_LC<-cph(Surv(Time, Event) ~ GARD + pTNM, 
+       data = temp, surv=T, x=T, y=T)
+f_LC
+```
+
+creating the nomogram plot
+```{r}
+surv_LC <- Survival(f_LC)
+surv_OS <- Survival(f_OS)
+surv2 <- function(x) surv_LC(2, lp=x)
+surv5 <- function(x) surv_LC(5, lp=x)
+surv10 <- function(x) surv_LC(10, lp=x)
+
+# surv percentages to be included on plot (0.6 = 60% surv)
+ss<-c(0.2,0.3, 0.4,0.5, 0.6,0.7,0.8,0.9,0.95,0.98)
+
+# can include multiple functions in the list, but will need to update other arguments to match the number of inputs
+nom <- nomogram(f, 
+                fun = list(surv5), 
+                funlabel = c('5 yr surv'), 
+                fun.at = list(ss) )
+
+# plot(nom, xfrac = 0.4)
+
+dd <- datadist(temp_filt)
+options(datadist='dd')
+f_OS<-cph(Surv(Time_OS, Event_OS) ~ GARD + pTNM,
+       data = temp, surv=T, x=T, y=T)
+f_LC<-cph(Surv(Time, Event) ~ GARD + pTNM,
+       data = temp, surv=T, x=T, y=T)
+
+temp$lp_OS <- f_OS[["linear.predictors"]]
+temp$lp_LC <- f_LC[["linear.predictors"]]
+
+timeROC_nomo_os<-timeROC(T=temp$Time_OS, delta=temp$Event_OS, marker=temp$lp_OS,
+                  cause=1,weighting="marginal",
+                  times=seq(0,10,.1), 
+                  iid=TRUE)
+timeROC_nomo_lc<-timeROC(T=temp$Time, delta=temp$Event, marker=temp$lp_LC,
+                  cause=1,weighting="marginal",
+                  times=seq(0,10,.1),
+                  iid=TRUE)
+
+# plot(timeROC_nomo, time= 2)
+plot(timeROC_nomo_lc, time= 10)
+ggsave("timeROC_nomo.png", units="in", width=7, height=5, dpi=300, compression = 'lzw')
+# plot(timeROC_nomo_no, time= 5)
+
+```
+
+# tertiles
+```{r load_data}
+
+#not really sure if this is relevant bc Jess's version uses it to make the GARD column
+surv <- Surv(time = temp$Time, event = temp$Event) 
+surv_os <- Surv(time = temp1$Time_OS, event = temp1$Event_OS) 
+```
+## Find optimal cutpoints
+Next, we'll find sweep all cutpoint options to find the optimal cutpoint for three (`sweep_cutpoints2`) groups. 
+```{r load_results}
+sweep_cutpoints2 <- function(tidy_data, surv_obj){
+   cutpoints_first = quantile(tidy_data$GARD, prob = seq(0, 1, 0.01))[-(1:5)]
+   cutpoints_first = cutpoints_first[-(96:101)]
+   cutpoint_first_vec <- c()
+   cutpoint_second_vec <- c()
+   low_n_vec <- c()
+   middle_n_vec <- c()
+   high_n_vec <- c()
+   chisq_vec <- c()
+   for (i in 1:length(cutpoints_first)){
+      GARD_after_cutoff <- tidy_data$GARD[tidy_data$GARD > min(cutpoints_first)]
+      cutpoints_second <- quantile(GARD_after_cutoff, prob = seq(0, 1, 0.01))[-(1:5)]
+      cutpoints_second <- cutpoints_second[-(96:101)]
+      for (j in 1:length(cutpoints_second)){
+         tidy_data_labs <- tidy_data %>%
+            mutate(pred_group = case_when(GARD <= cutpoints_first[i] ~ "low", 
+                                          GARD > cutpoints_first[i] &
+                                             GARD <= cutpoints_second[j] ~ "middle", 
+                                          GARD > cutpoints_second[j] ~ "high"))
+         survdiff_results <- survdiff(surv_obj ~ pred_group, data = tidy_data_labs)
+         chisq_vec <- c(chisq_vec, survdiff_results$chisq)
+         cutpoint_first_vec <- c(cutpoint_first_vec, cutpoints_first[[i]])
+         cutpoint_second_vec <- c(cutpoint_second_vec, cutpoints_second[[j]])
+         low_n_vec <- c(low_n_vec, nrow(tidy_data_labs %>% filter(pred_group == "low")))
+         middle_n_vec <- c(middle_n_vec, nrow(tidy_data_labs %>% filter(pred_group == "middle")))
+         high_n_vec <- c(high_n_vec, nrow(tidy_data_labs %>% filter(pred_group == "high")))
+      }
+   }
+   data.frame(cutpoint1 = cutpoint_first_vec,
+              cutpoint2 = cutpoint_second_vec,
+              low_n = low_n_vec,
+              middle_n = middle_n_vec,
+              high_n = high_n_vec,
+              chisq = chisq_vec) %>%
+      rowwise() %>%
+      mutate(min_n = min(low_n, middle_n, high_n)) %>%
+      ungroup()
+}
+
+cutpoints <- sweep_cutpoints2(temp, surv_os)
+cutpoints2 <- sweep_cutpoints2(temp2, surv)
+
+cutpoints_filtered <- cutpoints %>%
+   filter(min_n >= 4) %>% #require at least 4 samples in each group
+   filter(chisq > 10) # == max(chisq)) #   #cutpoints with the highest chisq result
+
+cutpoints_filtered2 <- cutpoints2 %>%
+   filter(min_n >= 4) %>% #require at least 4 samples in each group
+   filter(chisq > 10) # == max(chisq) #cutpoints with the highest chisq result
+
+```
+
+
+## Classify predictions
+Now, we'll classify each of our samples as high, medium, or low. 
+```{r classify predictions}
+
+# LC
+cutpoints_filtered2 <- cutpoints_filtered2[order(-cutpoints_filtered2$chisq),]
+rank <- 1
+double_cutpoint_best <- c(cut1 = cutpoints_filtered2[rank, ]$cutpoint1, 
+                          cut2 = cutpoints_filtered2[rank, ]$cutpoint2)
+
+lab1 = paste("GARD <",toString(trunc(10*cutpoints_filtered2[1, ]$cutpoint1)/10))
+lab2 = paste("GARD ",toString(trunc(10*cutpoints_filtered2[1,]$cutpoint1)/10),"-",toString(trunc(10*cutpoints_filtered2[1, ]$cutpoint2)/10))
+lab3 = paste("GARD >",toString(trunc(10*cutpoints_filtered2[1, ]$cutpoint2)/10))
+
+temp2 <- temp2 %>%
+      mutate(
+          pred_3grp_tert2 = factor(case_when(GARD < quantile(GARD, 0.33) ~ "1_Low",
+                                GARD >= quantile(GARD, 0.33) & GARD < quantile(GARD, 0.66) ~ "2_Middle",
+                                GARD >= quantile(GARD, 0.66) ~ "3_High"),
+                                ordered = TRUE),
+          pred_3grp_optimal2 = case_when(GARD <= double_cutpoint_best["cut1"] ~ "1_Low",
+                                GARD > double_cutpoint_best["cut1"] &
+                                   GARD <= double_cutpoint_best["cut2"] ~ "2_Middle",
+                                GARD > double_cutpoint_best["cut2"] ~ "3_High"),
+          pred_3grp_25502 = factor(case_when(GARD < quantile(GARD, 0.25) ~ "1_Low",
+                                GARD >= quantile(GARD, 0.25) &
+                                   GARD < quantile(GARD, 0.75) ~ "2_Middle",
+                                GARD >= quantile(GARD, 0.75) ~ "3_High"), 
+                                ordered = TRUE))
+
+
+# OS
+df <- cutpoints_filtered[order(-cutpoints_filtered$chisq),]
+
+# they all cut the data with the same samples in each group
+# taking the first value to get a single value for each cutpoint
+rank <- 1
+double_cutpoint_best <- c(cut1 = df[rank, ]$cutpoint1, 
+                          cut2 = df[rank, ]$cutpoint2)
+
+lab1 = paste("GARD <",toString(trunc(10*df[rank, ]$cutpoint1)/10))
+lab2 = paste("GARD ",toString(trunc(10*df[rank, ]$cutpoint1)/10),"-",toString(trunc(10*df[rank, ]$cutpoint2)/10))
+lab3 = paste("GARD >",toString(trunc(10*df[rank, ]$cutpoint2)/10))
+temp <- temp %>%
+      mutate(
+          pred_3grp_tert = factor(case_when(GARD < quantile(GARD, 0.33) ~ "1_Low",
+                                GARD >= quantile(GARD, 0.33) & GARD < quantile(GARD, 0.66) ~ "2_Middle",
+                                GARD >= quantile(GARD, 0.66) ~ "3_High"),
+                                ordered = TRUE),
+          pred_3grp_optimal = case_when(GARD <= double_cutpoint_best["cut1"] ~ "1_Low",
+                                GARD > double_cutpoint_best["cut1"] &
+                                   GARD <= double_cutpoint_best["cut2"] ~ "2_Middle",
+                                GARD > double_cutpoint_best["cut2"] ~ "3_High"),
+          pred_3grp_2550 = factor(case_when(GARD < quantile(GARD, 0.25) ~ "1_Low",
+                                GARD >= quantile(GARD, 0.25) &
+                                   GARD < quantile(GARD, 0.75) ~ "2_Middle",
+                                GARD >= quantile(GARD, 0.75) ~ "3_High"), 
+                                ordered = TRUE))
+```
+
+
+## Plot Results
+```{r Optimal 3 group cutpoints}
+# OS
+km_tert_opt <- survfit(surv_os ~ temp$pred_3grp_optimal)
+gg_grp3_opt <- ggsurvplot(km_tert_opt, data = temp, size = 1,
+   conf.int = FALSE, # Add confidence interval
+   pval = TRUE, # Add p-value
+   risk.table = TRUE, # Add risk table
+   risk.table.height = 0.25, # change if you have >2 groups
+   risk.table.y.text.col = T, # show colors in table listing
+   ncensor.plot = FALSE,
+   ncensor.plot.height = 0.25,
+   xlab = "Time in years", # adjust X axis label
+   xlim = c(0, 18),
+   break.time.by = 1, # break X axis in time intervals
+   legend.labs = c(lab1, lab2, lab3), #c("Low GARD", "Middle GARD", "High GARD"),
+   title = "TNBC OS grouped by GARD tertile (optimal)",
+   ggtheme = theme_bw() + theme(plot.title = element_text(hjust = 0.5))
+   )
+gg_grp3_opt
+
+
+# LC
+km_tert_opt2 <- survfit(surv ~ temp$pred_3grp_optimal)
+gg_grp3_opt2 <- ggsurvplot(km_tert_opt2, data = temp, size = 1,
+   conf.int = FALSE, # Add confidence interval
+   pval = TRUE, # Add p-value
+   risk.table = TRUE, # Add risk table
+   risk.table.height = 0.25, # change if you have >2 groups
+   risk.table.y.text.col = T, # show colors in table listing
+   ncensor.plot = FALSE,
+   ncensor.plot.height = 0.25,
+   xlab = "Time in years", # adjust X axis label
+   xlim = c(0, 18),
+   break.time.by = 1, # break X axis in time intervals
+   legend.labs = c(lab1, lab2, lab3), #c("Low GARD", "Middle GARD", "High GARD"),
+   title = "TNBC LC grouped by GARD tertile (optimal)",
+   ggtheme = theme_bw() + theme(plot.title = element_text(hjust = 0.5))
+   )
+gg_grp3_opt2
+```
+
+```{r Tertiles by 33%}
+km_tert_by33 <- survfit(surv_os ~ temp$pred_3grp_tert)
+gg_grp3_tert <- ggsurvplot(km_tert_by33, data = temp, size = 1,
+   conf.int = FALSE, # Add confidence interval
+   pval = TRUE, # Add p-value
+   risk.table = TRUE, # Add risk table
+   risk.table.height = 0.25, # change if you have >2 groups
+   risk.table.y.text.col = T, # show colors in table listing
+   ncensor.plot = FALSE,
+   ncensor.plot.height = 0.25,
+   xlab = "Time in years", # adjust X axis label
+   xlim = c(0, 18),
+   break.time.by = 1, # break X axis in time intervals
+   legend.labs = c("Low GARD", "Middle GARD", "High GARD"),
+   title = "TNBC OS grouped by GARD tertile 33/33/33",
+   ggtheme = theme_bw() + theme(plot.title = element_text(hjust = 0.5))
+   )
+gg_grp3_tert
+
+
+km_tert_by33_2 <- survfit(surv ~ temp$pred_3grp_tert)
+gg_grp3_tert2 <- ggsurvplot(km_tert_by33_2, data = temp, size = 1,
+   conf.int = FALSE, # Add confidence interval
+   pval = TRUE, # Add p-value
+   risk.table = TRUE, # Add risk table
+   risk.table.height = 0.25, # change if you have >2 groups
+   risk.table.y.text.col = T, # show colors in table listing
+   ncensor.plot = FALSE,
+   ncensor.plot.height = 0.25,
+   xlab = "Time in years", # adjust X axis label
+   xlim = c(0, 18),
+   break.time.by = 1, # break X axis in time intervals
+   legend.labs = c("Low GARD", "Middle GARD", "High GARD"),
+   title = "TNBC LC grouped by GARD tertile 33/33/33",
+   ggtheme = theme_bw() + theme(plot.title = element_text(hjust = 0.5))
+   )
+gg_grp3_tert2
+```
+
+```{r Tertiles by 25/50/25}
+km_tert_by25_50_25 <- survfit(surv_os ~ temp$pred_3grp_2550)
+gg_grp3_2550 <- ggsurvplot(km_tert_by25_50_25, data = temp, size = 1,
+   conf.int = FALSE, # Add confidence interval
+   pval = TRUE, # Add p-value
+   risk.table = TRUE, # Add risk table
+   risk.table.height = 0.25, # change if you have >2 groups
+   risk.table.y.text.col = T, # show colors in table listing
+   ncensor.plot = FALSE,
+   ncensor.plot.height = 0.25,
+   xlab = "Time in years", # adjust X axis label
+   xlim = c(0, 18),
+   break.time.by = 1, # break X axis in time intervals
+   legend.labs = c(lab1, lab2, lab3), #c("Low GARD", "Middle GARD", "High GARD"),
+   title = "TNBC OS grouped by GARD, 25/50/25",
+   ggtheme = theme_bw() + theme(plot.title = element_text(hjust = 0.5))
+   )
+gg_grp3_2550
+
+km_tert_by25_50_25_2 <- survfit(surv ~ temp$pred_3grp_2550)
+gg_grp3_2550_2 <- ggsurvplot(km_tert_by25_50_25_2, data = temp, size = 1,
+   conf.int = FALSE, # Add confidence interval
+   pval = TRUE, # Add p-value
+   risk.table = TRUE, # Add risk table
+   risk.table.height = 0.25, # change if you have >2 groups
+   risk.table.y.text.col = T, # show colors in table listing
+   ncensor.plot = FALSE,
+   ncensor.plot.height = 0.25,
+   xlab = "Time in years", # adjust X axis label
+   xlim = c(0, 18),
+   break.time.by = 1, # break X axis in time intervals
+   legend.labs = c("Low GARD", "Middle GARD", "High GARD"),
+   title = "TNBC LC grouped by GARD, 25/50/25",
+   ggtheme = theme_bw() + theme(plot.title = element_text(hjust = 0.5))
+   )
+gg_grp3_2550_2
+```
